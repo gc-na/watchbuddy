@@ -72,7 +72,37 @@ const checks = {
   rejectsMusicEcho: context.needsQualityRetry("음악이 뭐지? 🎧", "이 노래가 뭐지"),
   rejectsPlaceEcho: context.needsQualityRetry("여기 여기가 어디예요?", "여기가 어디냐"),
   musicFallbackIsGrounded: context.buildFallbackAnswer("이 노래가 뭐지", sample).includes("곡명"),
-  placeFallbackUsesMetadata: context.buildFallbackAnswer("여기가 어디냐", sample).includes("마쓰야마")
+  placeFallbackUsesMetadata: context.buildFallbackAnswer("여기가 어디냐", sample).includes("마쓰야마"),
+  directMeetingAnswer: context.answerDirectlyFromContext("뭐랑 만날거 같다고?", {
+    ...sample,
+    currentTranscript: "[30:27] 쥐하고 만날 것 같아 쥐하고 만나면 대형인데",
+    nearbyTranscript: "[30:22] 뭐가 있을까 우리가 또 궁금하긴 못참지\n[30:27] 쥐하고 만날 것 같아 쥐하고 만나면 대형인데",
+    transcriptPreview: "[30:27] 쥐하고 만날 것 같아 쥐하고 만나면 대형인데"
+  }) === "쥐랑 만날 것 같다고 했어요.",
+  directUyuniPlaceAnswer: context.answerDirectlyFromContext("여기가 어디야?", {
+    ...sample,
+    title: "우유니 사막 한가운데서 하룻밤을 보내면 생기는 일 - YouTube",
+    metadata: {
+      description: "볼리비아 우유니 사막을 횡단하며 경험한 극한의 현실",
+      ogDescription: "우유니 사막 여행"
+    },
+    currentTranscript: "[30:55] 지금 존이 동굴 안에 완전히 들어갔습니다",
+    nearbyTranscript: "[30:55] 지금 존이 동굴 안에 완전히 들어갔습니다"
+  }).includes("볼리비아 우유니 사막"),
+  directSituationAnswer: context.answerDirectlyFromContext("지금 무슨 얘기야?", {
+    ...sample,
+    currentTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.",
+    nearbyTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.\n[3:01] 수백 명의 사람들이 주식 가격을 외치고 있었습니다."
+  }).includes("파리 증권 거래소"),
+  directParisPlaceAnswer: context.answerDirectlyFromContext("여기가 어디야?", {
+    ...sample,
+    title: "수학자들이 얼마나 돈을 벌고 싶은지 감도 안옴 - YouTube",
+    metadata: {
+      description: "뉴턴과 파리 증권 거래소, 금융 시장을 수학으로 모델링한 이야기"
+    },
+    currentTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.",
+    nearbyTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다."
+  }).includes("프랑스 파리")
 };
 
 const failures = Object.entries(checks).filter(([, passed]) => !passed);

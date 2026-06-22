@@ -15,6 +15,9 @@ async function getWatchContext() {
   const platform = detectPlatform();
   const currentTime = video?.currentTime ?? 0;
   const transcript = await collectTranscript(platform, currentTime);
+  const transcriptRows = parseTimedTranscriptText(transcript);
+  const nearbyRows = selectNearbyRows(transcriptRows, currentTime, 90);
+  const currentRow = findCurrentRow(transcriptRows, currentTime);
   const pageText = compactText(document.body?.innerText || "").slice(0, MAX_TEXT_CHARS);
 
   return {
@@ -26,6 +29,9 @@ async function getWatchContext() {
     duration: video ? video.duration : null,
     paused: video ? video.paused : null,
     transcript,
+    transcriptRows: nearbyRows,
+    currentTranscript: currentRow ? `[${currentRow.time}] ${currentRow.text}` : "",
+    nearbyTranscript: nearbyRows.map((row) => `[${row.time}] ${row.text}`).join("\n"),
     transcriptPreview: summarizeTranscriptPreview(transcript, currentTime),
     pageText
   };
@@ -190,7 +196,7 @@ function parseTranscriptRow(text) {
   if (!match) return null;
 
   const rawText = compactText(text.replace(match[1], ""));
-  const rowText = compactText(rawText.replace(/^\d{1,2}분\s*\d{1,2}초\s*/, "").replace(/^\d{1,2}초\s*/, ""));
+  const rowText = compactText(rawText.replace(/^\d{1,2}분\s*(?:\d{1,2}초)?\s*/, "").replace(/^\d{1,2}초\s*/, ""));
   if (!rowText) return null;
 
   return {
@@ -296,6 +302,43 @@ function summarizeTranscriptPreview(transcript, currentTime) {
   });
 
   return (nearby.length ? nearby : lines).slice(0, 8).join("\n");
+}
+
+function parseTimedTranscriptText(transcript) {
+  return transcript
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.+)$/);
+      if (!match) return null;
+      return {
+        time: match[1],
+        seconds: parseTimestamp(match[1]),
+        text: match[2].trim()
+      };
+    })
+    .filter(Boolean);
+}
+
+function selectNearbyRows(rows, currentTime, windowSeconds) {
+  const foundIndex = rows.findIndex((row) => row.seconds >= currentTime);
+  const currentIndex = foundIndex === -1 ? rows.length - 1 : Math.max(0, foundIndex);
+  const centeredRows = rows.slice(Math.max(0, currentIndex - 10), currentIndex + 16);
+  const nearby = centeredRows.filter((row) => Math.abs(row.seconds - currentTime) <= windowSeconds);
+  if (nearby.length) return nearby;
+
+  return rows.slice(Math.max(0, currentIndex - 8), currentIndex + 12);
+}
+
+function findCurrentRow(rows, currentTime) {
+  if (!rows.length) return null;
+
+  let best = rows[0];
+  for (const row of rows) {
+    if (row.seconds <= currentTime + 3) {
+      best = row;
+    }
+  }
+  return best;
 }
 
 function parseTimestamp(timestamp) {

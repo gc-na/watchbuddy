@@ -156,6 +156,15 @@ async function askQuestion(question) {
 
   try {
     latestContext = await refreshContext();
+    const directAnswer = answerDirectlyFromContext(question, latestContext);
+    if (directAnswer) {
+      rememberMessage("user", question);
+      addMessage("assistant", directAnswer);
+      rememberMessage("assistant", directAnswer);
+      setStatus("Answered from transcript.");
+      return;
+    }
+
     const answer = await callAI({
       provider: selectedProvider,
       apiKey: selectedApiKey,
@@ -411,6 +420,7 @@ function buildPrompt(question, context, provider = DEFAULT_PROVIDER) {
   const transcriptContext = buildTranscriptContext(context, budget);
   const metadataContext = formatMetadata(context.metadata, budget.metadataChars || 1000);
   const pageContext = clipText(context.pageText || "", budget.pageChars);
+  const focusedTranscript = buildFocusedTranscript(context, budget);
   const languageHint = detectLanguage(question);
   const recentChat = formatRecentChat(provider);
   const intent = detectQuestionIntent(question);
@@ -448,6 +458,12 @@ function buildPrompt(question, context, provider = DEFAULT_PROVIDER) {
     "Video metadata:",
     metadataContext || "(No metadata captured.)",
     "",
+    "Current caption line:",
+    context.currentTranscript || "(No current caption captured.)",
+    "",
+    "Nearby caption lines:",
+    focusedTranscript || "(No nearby caption lines captured.)",
+    "",
     "Transcript preview around the current time:",
     context.transcriptPreview || "(No nearby transcript preview captured.)",
     "",
@@ -469,6 +485,12 @@ function buildTranscriptContext(context, budget) {
 
   const timedWindow = selectTimedTranscriptWindow(transcript, context.currentTime, budget.transcriptChars);
   return timedWindow || clipText(preview || transcript, budget.transcriptChars);
+}
+
+function buildFocusedTranscript(context, budget) {
+  const nearby = context.nearbyTranscript || "";
+  if (nearby) return clipText(nearby, Math.min(budget.transcriptChars, 2200));
+  return "";
 }
 
 function selectTimedTranscriptWindow(transcript, currentTime, maxChars) {
@@ -509,8 +531,165 @@ function buildMinimalPrompt(question, context) {
     "Do not repeat the question. If the exact answer is not in the text, say what is missing and what can be inferred.",
     "",
     "Only use this nearby transcript:",
-    clipText(context.transcriptPreview || context.transcript || "", 1200)
+    clipText(context.nearbyTranscript || context.transcriptPreview || context.transcript || "", 1200)
   ].join("\n");
+}
+
+function answerDirectlyFromContext(question, context) {
+  const intent = detectQuestionIntent(question);
+  const nearbyText = [
+    context.currentTranscript,
+    context.nearbyTranscript,
+    context.transcriptPreview
+  ].filter(Boolean).join("\n");
+
+  if (intent === "music") {
+    return answerMusicQuestion(question, context, nearbyText);
+  }
+
+  if (intent === "place") {
+    return answerPlaceQuestion(question, context, nearbyText);
+  }
+
+  const situationAnswer = answerSituationQuestion(question, context, nearbyText);
+  if (situationAnswer) return situationAnswer;
+
+  const meetingAnswer = answerMeetingQuestion(question, nearbyText);
+  if (meetingAnswer) return meetingAnswer;
+
+  const priceAnswer = answerPriceQuestion(question, nearbyText);
+  if (priceAnswer) return priceAnswer;
+
+  return "";
+}
+
+function answerMeetingQuestion(question, text) {
+  if (!/(뭐|무엇|누구|누굴|뭘).{0,8}(만나|만날|마주|나와|나올|있을|생길)|만날.{0,8}(뭐|누구|무엇)/.test(question)) {
+    return "";
+  }
+
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const match = line.match(/([가-힣A-Za-z0-9]{1,12})(?:하고|이랑|랑|와|과)\s*만날\s*것\s*같/);
+    if (match) return `${match[1]}랑 만날 것 같다고 했어요.`;
+  }
+
+  for (const line of lines) {
+    const match = line.match(/([가-힣A-Za-z0-9]{1,12})(?:하고|이랑|랑|와|과)\s*만나면/);
+    if (match) return `${match[1]}랑 만난다는 얘기였어요.`;
+  }
+
+  return "";
+}
+
+function answerPriceQuestion(question, text) {
+  if (!/(얼마|가격|몇\s*원|비싸|price|cost)/i.test(question)) return "";
+
+  const match = text.match(/(\d+(?:만|천)?(?:\d{1,3})?(?:,\d{3})?\s*원|\d+(?:\.\d+)?\s*만원|\d+(?:\.\d+)?\s*천원)/);
+  if (!match) return "";
+
+  return `자막 기준으로는 ${match[1].replace(/\s+/g, "")}이라고 했어요.`;
+}
+
+function answerMusicQuestion(_question, context, text) {
+  const evidence = [context.title, formatMetadata(context.metadata, 800), text].filter(Boolean).join("\n");
+  const quoted = evidence.match(/[\"'“”‘’]([^\"'“”‘’]{2,80})[\"'“”‘’]/);
+  if (quoted && /song|music|노래|곡|ost|bgm|album|track/i.test(evidence)) {
+    return `텍스트 컨텍스트 기준으로는 “${quoted[1]}”가 곡명 후보예요.`;
+  }
+
+  const englishTitle = evidence.match(/\b([A-Z][A-Za-z0-9'’.-]{2,}(?:\s+[A-Z][A-Za-z0-9'’.-]{1,}){0,5})\b/);
+  if (englishTitle && /song|music|노래|곡|ost|bgm|album|track/i.test(evidence)) {
+    return `텍스트 컨텍스트 기준으로는 “${englishTitle[1]}”가 곡명 후보예요.`;
+  }
+
+  return "정확한 곡명은 지금 캡처된 자막/제목/설명에는 안 나와요. WatchBuddy는 현재 배경음 자체를 듣거나 영상 속 글자를 OCR로 읽지는 못해서, 텍스트에 곡명이 없으면 확인할 수 없습니다.";
+}
+
+function answerPlaceQuestion(_question, context, text) {
+  const evidence = [context.title, formatMetadata(context.metadata, 1200), text].filter(Boolean).join("\n");
+  const place = inferPlace(evidence);
+  if (!place) return "";
+
+  const focusedText = [
+    context.currentTranscript || "",
+    ...getFocusedPlainLines(context, text)
+  ].join("\n");
+
+  if (/해변|바닷가|항구|동굴|사막|마을|역|공항|시장|사원|절|산|섬|언덕|비석|표지판|증권\s*거래소/.test(focusedText)) {
+    return `정확한 지점명까지는 자막에 없지만, 큰 위치는 ${place} 쪽이고 지금 장면은 ${extractSceneHint(focusedText)}인 것으로 보여요.`;
+  }
+
+  return `제목/설명/자막 기준으로는 ${place} 쪽이에요.`;
+}
+
+function answerSituationQuestion(question, context, text) {
+  if (!/(지금|여기|이거|이 장면|현재).{0,10}(무슨|뭔|뭐).{0,8}(얘기|상황|하는|중|말)|무슨\s*얘기|뭔\s*얘기/.test(question)) {
+    return "";
+  }
+
+  const current = (context.currentTranscript || "")
+    .replace(/^\[\d{1,2}:\d{2}(?::\d{2})?\]\s*/, "")
+    .trim();
+  const lines = getFocusedPlainLines(context, text);
+  const useful = [current, ...lines]
+    .filter(Boolean)
+    .filter((line, index, arr) => arr.indexOf(line) === index)
+    .slice(0, 3)
+    .join(" / ");
+
+  if (!useful) return "";
+  return `지금은 이 대목 얘기예요: ${clipInline(useful, 220)}`;
+}
+
+function clipInline(text, maxChars) {
+  const inline = String(text || "").replace(/\s+/g, " ").trim();
+  return inline.length <= maxChars ? inline : `${inline.slice(0, maxChars - 1).trim()}…`;
+}
+
+function getFocusedPlainLines(context, text) {
+  if (Array.isArray(context.transcriptRows) && context.transcriptRows.length) {
+    const rows = context.transcriptRows;
+    const foundIndex = rows.findIndex((row) => row.seconds >= (context.currentTime || 0));
+    const index = foundIndex === -1 ? rows.length - 1 : Math.max(0, foundIndex);
+    return rows
+      .slice(Math.max(0, index - 1), index + 3)
+      .map((row) => row.text)
+      .filter(Boolean);
+  }
+
+  const parsed = (context.nearbyTranscript || text)
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.+)$/);
+      return match ? { seconds: parseTimestamp(match[1]), text: match[2].trim() } : null;
+    })
+    .filter(Boolean);
+
+  if (!parsed.length) {
+    return (context.nearbyTranscript || text)
+      .split("\n")
+      .map((line) => line.replace(/^\[\d{1,2}:\d{2}(?::\d{2})?\]\s*/, "").trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  }
+
+  const currentTime = context.currentTime || parsed[0].seconds;
+  const foundIndex = parsed.findIndex((row) => row.seconds >= currentTime);
+  const index = foundIndex === -1 ? parsed.length - 1 : Math.max(0, foundIndex);
+  return parsed.slice(Math.max(0, index - 1), index + 3).map((row) => row.text);
+}
+
+function extractSceneHint(text) {
+  if (/동굴/.test(text)) return "동굴 안";
+  if (/비석|표지판|언덕/.test(text)) return "역사 표지판/언덕 근처";
+  if (/증권\s*거래소/.test(text)) return "증권거래소";
+  if (/해변|바닷가/.test(text)) return "바닷가";
+  if (/항구|배/.test(text)) return "항구 근처";
+  if (/사막/.test(text)) return "사막";
+  if (/역/.test(text)) return "역 근처";
+  if (/마을|소도시/.test(text)) return "마을/소도시";
+  return "현재 보이는 장소";
 }
 
 function buildRepairPrompt(question, context, badAnswer, provider = DEFAULT_PROVIDER) {
@@ -665,6 +844,9 @@ function buildFallbackAnswer(question, context) {
 }
 
 function inferPlace(text) {
+  if (/파리|Paris/i.test(text)) return "프랑스 파리";
+  if (/우유니|Uyuni/i.test(text)) return "볼리비아 우유니 사막";
+  if (/볼리비아|Bolivia/i.test(text)) return "볼리비아";
   if (/마쓰야마|마쯔야마|Matsuyama/i.test(text)) return "일본 시코쿠 마쓰야마";
   if (/시코쿠|Shikoku/i.test(text)) return "일본 시코쿠";
   if (/부산/i.test(text)) return "부산";
