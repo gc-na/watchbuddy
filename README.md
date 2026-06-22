@@ -64,6 +64,16 @@ Depending on your Ollama setup, you may also need to allow Chrome extension orig
 7. Click the WatchBuddy extension icon or press `Alt+W`.
 8. Pick an AI provider and add its API key in settings.
 
+## Validate
+
+Run the local validation script before publishing:
+
+```bash
+node scripts/validate.js
+```
+
+It checks extension JavaScript syntax, the manifest, prompt grounding, Korean follow-up questions, and fallback behavior for weak local-model answers.
+
 ## Tips
 
 For best results on YouTube, open the transcript panel or enable captions before asking. Some platforms restrict subtitle access, so WatchBuddy falls back to visible captions and page text.

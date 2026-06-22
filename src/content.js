@@ -21,6 +21,7 @@ async function getWatchContext() {
     platform,
     url: location.href,
     title: document.title,
+    metadata: collectPageMetadata(platform),
     currentTime: video ? video.currentTime : null,
     duration: video ? video.duration : null,
     paused: video ? video.paused : null,
@@ -28,6 +29,34 @@ async function getWatchContext() {
     transcriptPreview: summarizeTranscriptPreview(transcript, currentTime),
     pageText
   };
+}
+
+function collectPageMetadata(platform) {
+  const base = {
+    description: getMetaContent("description"),
+    keywords: getMetaContent("keywords"),
+    ogTitle: getMetaContent("og:title"),
+    ogDescription: getMetaContent("og:description")
+  };
+
+  if (platform !== "YouTube") return base;
+
+  return {
+    ...base,
+    channel: compactText(document.querySelector("ytd-channel-name, #owner #channel-name, #text.ytd-channel-name")?.innerText || ""),
+    description: compactText([
+      base.description,
+      document.querySelector("#description-inline-expander, ytd-text-inline-expander, #description, #description-text")?.innerText || ""
+    ].filter(Boolean).join("\n")).slice(0, 2400),
+    hashtags: [...document.querySelectorAll("a[href^='/hashtag/']")]
+      .map((node) => compactText(node.innerText || node.textContent || ""))
+      .filter(Boolean)
+      .slice(0, 12)
+  };
+}
+
+function getMetaContent(name) {
+  return document.querySelector(`meta[name='${name}'], meta[property='${name}']`)?.getAttribute("content") || "";
 }
 
 function findActiveVideo() {

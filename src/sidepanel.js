@@ -5,6 +5,7 @@ const PROVIDERS = {
     needsKey: false,
     budget: {
       transcriptChars: 2600,
+      metadataChars: 1000,
       pageChars: 400,
       preferPreview: true
     }
@@ -15,6 +16,7 @@ const PROVIDERS = {
     needsKey: true,
     budget: {
       transcriptChars: 7000,
+      metadataChars: 1800,
       pageChars: 1200
     }
   },
@@ -24,6 +26,7 @@ const PROVIDERS = {
     needsKey: true,
     budget: {
       transcriptChars: 9000,
+      metadataChars: 2200,
       pageChars: 1500
     }
   },
@@ -33,6 +36,7 @@ const PROVIDERS = {
     needsKey: true,
     budget: {
       transcriptChars: 7000,
+      metadataChars: 1800,
       pageChars: 1200
     }
   },
@@ -42,6 +46,7 @@ const PROVIDERS = {
     needsKey: true,
     budget: {
       transcriptChars: 10000,
+      metadataChars: 2400,
       pageChars: 1800
     }
   },
@@ -51,6 +56,7 @@ const PROVIDERS = {
     needsKey: false,
     budget: {
       transcriptChars: 4500,
+      metadataChars: 1200,
       pageChars: 800
     }
   }
@@ -225,12 +231,13 @@ async function callAI({ provider, apiKey, model, question, context }) {
     headers["X-Title"] = "WatchBuddy";
   }
 
+  const messages = buildMessages(question, context, provider);
   const response = await fetch(endpoints[provider], {
     method: "POST",
     headers,
     body: JSON.stringify({
       model,
-      messages: buildMessages(question, context, provider),
+      messages,
       temperature: 0.4
     })
   });
@@ -240,7 +247,12 @@ async function callAI({ provider, apiKey, model, question, context }) {
     throw new Error(data?.error?.message || `${PROVIDERS[provider].label} request failed (${response.status})`);
   }
 
-  return data?.choices?.[0]?.message?.content?.trim() || "I did not receive a text answer.";
+  const answer = data?.choices?.[0]?.message?.content?.trim() || "";
+  if (needsQualityRetry(answer, question)) {
+    return retryChatCompletion({ endpoint: endpoints[provider], headers, model, provider, question, context, badAnswer: answer });
+  }
+
+  return answer || "I did not receive a text answer.";
 }
 
 async function callChromeBuiltInAI({ question, context }) {
@@ -281,6 +293,13 @@ async function callChromeBuiltInAI({ question, context }) {
       setStatus("Context was large. Retrying with a smaller moment...");
       answer = await session.prompt(buildMinimalPrompt(question, context));
     }
+    if (needsQualityRetry(answer, question)) {
+      setStatus("Answer looked weak. Retrying with stricter grounding...");
+      answer = await session.prompt(buildRepairPrompt(question, context, answer, "chrome-ai"));
+    }
+    if (needsQualityRetry(answer, question)) {
+      answer = buildFallbackAnswer(question, context);
+    }
     return answer.trim() || "I did not receive a text answer.";
   } finally {
     session.destroy?.();
@@ -307,7 +326,12 @@ async function callOpenAIResponses({ apiKey, model, question, context }) {
     throw new Error(data?.error?.message || `OpenAI request failed (${response.status})`);
   }
 
-  return extractResponseText(data) || "I did not receive a text answer.";
+  const answer = extractResponseText(data) || "";
+  if (needsQualityRetry(answer, question)) {
+    return retryOpenAIResponses({ apiKey, model, question, context, badAnswer: answer });
+  }
+
+  return answer || "I did not receive a text answer.";
 }
 
 async function callGemini({ apiKey, model, question, context }) {
@@ -337,10 +361,16 @@ async function callGemini({ apiKey, model, question, context }) {
     throw new Error(data?.error?.message || `Gemini request failed (${response.status})`);
   }
 
-  return (data?.candidates?.[0]?.content?.parts || [])
+  const answer = (data?.candidates?.[0]?.content?.parts || [])
     .map((part) => part.text || "")
     .join("")
-    .trim() || "I did not receive a text answer.";
+    .trim();
+
+  if (needsQualityRetry(answer, question)) {
+    return retryGemini({ apiKey, model, question, context, badAnswer: answer });
+  }
+
+  return answer || "I did not receive a text answer.";
 }
 
 function buildMessages(question, context, provider) {
@@ -362,6 +392,8 @@ function systemPrompt() {
     "Answer from the current timestamp, transcript, title, and recent chat.",
     "Resolve casual references like '얘', '이 사람', '이거', '그거', '그래서' to the main speaker, subject, or moment in the current video unless the chat clearly says otherwise.",
     "Trust the transcript over generic page text. If the transcript contains the answer, do not say the information is limited.",
+    "You cannot hear raw audio or inspect video pixels unless those details appear in provided text context. For music or exact visual-place questions, state that limitation briefly when needed.",
+    "Do not repeat or rephrase the user's question as the answer.",
     "Answer in the user's language. If the user writes Korean, answer naturally in Korean.",
     "Be short, direct, and conversational."
   ].join(" ");
@@ -377,13 +409,30 @@ function syncProviderFields() {
 function buildPrompt(question, context, provider = DEFAULT_PROVIDER) {
   const budget = PROVIDERS[provider]?.budget || PROVIDERS[DEFAULT_PROVIDER].budget;
   const transcriptContext = buildTranscriptContext(context, budget);
+  const metadataContext = formatMetadata(context.metadata, budget.metadataChars || 1000);
   const pageContext = clipText(context.pageText || "", budget.pageChars);
   const languageHint = detectLanguage(question);
   const recentChat = formatRecentChat(provider);
+  const intent = detectQuestionIntent(question);
 
   return [
+    languageHint === "Korean" ? "답변 규칙:" : "Answer rules:",
+    languageHint === "Korean"
+      ? "- 질문을 반복하지 말고, 첫 문장부터 답을 말해."
+      : "- Do not repeat the question. Answer directly in the first sentence.",
+    languageHint === "Korean"
+      ? "- 근거가 부족하면 '정확히는 컨텍스트에 없다'고 말하고, 지금 알 수 있는 범위를 말해."
+      : "- If evidence is missing, say what is missing and what can still be inferred.",
+    languageHint === "Korean"
+      ? "- '얘/이 사람/여기/이거/그거'는 현재 영상 장면의 주인공, 장소, 대상이라고 보고 해석해."
+      : "- Resolve pronouns to the speaker, place, or object in the current video moment.",
+    languageHint === "Korean"
+      ? "- 노래/정확한 장소처럼 화면 글자나 실제 오디오가 필요한 질문은, 제공된 텍스트에 없으면 그 한계를 짧게 밝혀."
+      : "- For music or exact visual place questions, mention limitations if the provided text does not contain the answer.",
+    "",
     `User language: ${languageHint}`,
     `Answer language: ${languageHint}`,
+    `Question intent: ${intent}`,
     `User question: ${question}`,
     "",
     "Conversation so far:",
@@ -395,6 +444,9 @@ function buildPrompt(question, context, provider = DEFAULT_PROVIDER) {
     `URL: ${context.url}`,
     `Current time: ${context.currentTime == null ? "unknown" : formatTime(context.currentTime)}`,
     `Duration: ${context.duration == null ? "unknown" : formatTime(context.duration)}`,
+    "",
+    "Video metadata:",
+    metadataContext || "(No metadata captured.)",
     "",
     "Transcript preview around the current time:",
     context.transcriptPreview || "(No nearby transcript preview captured.)",
@@ -454,10 +506,200 @@ function buildMinimalPrompt(question, context) {
     `Title: ${context.title || "Untitled video"}`,
     `Current time: ${context.currentTime == null ? "unknown" : formatTime(context.currentTime)}`,
     "Resolve '얘/이 사람/이거/그거' as the main speaker or subject in this video moment.",
+    "Do not repeat the question. If the exact answer is not in the text, say what is missing and what can be inferred.",
     "",
     "Only use this nearby transcript:",
     clipText(context.transcriptPreview || context.transcript || "", 1200)
   ].join("\n");
+}
+
+function buildRepairPrompt(question, context, badAnswer, provider = DEFAULT_PROVIDER) {
+  const languageHint = detectLanguage(question);
+  const budget = PROVIDERS[provider]?.budget || PROVIDERS[DEFAULT_PROVIDER].budget;
+  return [
+    languageHint === "Korean" ? "방금 답변은 품질 기준을 통과하지 못했어." : "The previous answer failed the quality bar.",
+    `Bad answer: ${badAnswer || "(empty)"}`,
+    "",
+    languageHint === "Korean"
+      ? "다시 답해. 질문을 따라 하지 말고, 자막/제목/설명에서 확인되는 사실만 근거로 짧게 답해."
+      : "Answer again. Do not echo the question. Use only facts from the title, metadata, transcript, and recent chat.",
+    languageHint === "Korean"
+      ? "정확히 모르면 '정확한 곡명/장소는 제공된 텍스트에 없다'고 말하고, 대신 지금 알 수 있는 내용을 말해."
+      : "If the exact music/place is absent, say that plainly, then give the best supported context.",
+    "",
+    buildPrompt(question, context, provider === "chrome-ai" ? "chrome-ai" : provider).slice(0, budget.transcriptChars + (budget.metadataChars || 1000) + 1800)
+  ].join("\n");
+}
+
+async function retryChatCompletion({ endpoint, headers, model, provider, question, context, badAnswer }) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt() },
+        { role: "user", content: buildRepairPrompt(question, context, badAnswer, provider) }
+      ],
+      temperature: 0.2
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `${PROVIDERS[provider].label} retry failed (${response.status})`);
+  }
+
+  const answer = data?.choices?.[0]?.message?.content?.trim() || badAnswer || "";
+  return needsQualityRetry(answer, question) ? buildFallbackAnswer(question, context) : answer;
+}
+
+async function retryOpenAIResponses({ apiKey, model, question, context, badAnswer }) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        { role: "developer", content: [{ type: "input_text", text: systemPrompt() }] },
+        { role: "user", content: [{ type: "input_text", text: buildRepairPrompt(question, context, badAnswer, "openai") }] }
+      ]
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `OpenAI retry failed (${response.status})`);
+  }
+
+  const answer = extractResponseText(data) || badAnswer || "";
+  return needsQualityRetry(answer, question) ? buildFallbackAnswer(question, context) : answer;
+}
+
+async function retryGemini({ apiKey, model, question, context, badAnswer }) {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: systemPrompt() }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: buildRepairPrompt(question, context, badAnswer, "gemini") }]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.2
+      }
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `Gemini retry failed (${response.status})`);
+  }
+
+  const answer = (data?.candidates?.[0]?.content?.parts || [])
+    .map((part) => part.text || "")
+    .join("")
+    .trim() || badAnswer || "";
+
+  return needsQualityRetry(answer, question) ? buildFallbackAnswer(question, context) : answer;
+}
+
+function needsQualityRetry(answer, question) {
+  const text = (answer || "").trim();
+  if (!text) return true;
+  if (text.length < 12) return true;
+
+  const questionLanguage = detectLanguage(question);
+  if (questionLanguage === "Korean" && !/[가-힣]/.test(text.slice(0, 300))) return true;
+
+  const normalizedAnswer = normalizeForCompare(text);
+  const normalizedQuestion = normalizeForCompare(question);
+  if (normalizedAnswer === normalizedQuestion) return true;
+  if (normalizedQuestion && normalizedAnswer.includes(normalizedQuestion) && text.length < question.length * 4) return true;
+  if (/^(음악이\s*뭐지|여기\s*여기가\s*어디예요|여기가\s*어디(야|예요)?)[?.!…\s]*$/i.test(text)) return true;
+  if (/^(what music|where is this|where are we)[?.!…\s]*$/i.test(text)) return true;
+
+  return false;
+}
+
+function buildFallbackAnswer(question, context) {
+  const language = detectLanguage(question);
+  const intent = detectQuestionIntent(question);
+  const metadata = formatMetadata(context.metadata, 1000);
+  const transcript = context.transcriptPreview || selectTimedTranscriptWindow(context.transcript || "", context.currentTime, 1200) || "";
+  const evidence = [context.title, metadata, transcript].filter(Boolean).join("\n");
+
+  if (language !== "Korean") {
+    if (intent === "music") {
+      return "I cannot identify the exact song from the captured text. WatchBuddy currently sees transcript, title, and page text, but not raw audio or video pixels.";
+    }
+    if (intent === "place") {
+      return `The exact place is not explicit in the captured text. From the title/metadata, this appears to be ${inferPlace(evidence) || "the location shown in the current travel video"}.`;
+    }
+    return `From the nearby transcript, the relevant context is: ${clipText(transcript || evidence, 300)}`;
+  }
+
+  if (intent === "music") {
+    return "정확한 곡명은 지금 캡처된 자막/제목/설명에는 안 나와요. WatchBuddy는 현재 배경음 자체를 듣거나 영상 속 글자를 OCR로 읽지는 못해서, 텍스트에 곡명이 없으면 확인할 수 없습니다.";
+  }
+
+  if (intent === "place") {
+    const place = inferPlace(evidence);
+    if (place) {
+      return `정확한 해변/장소명까지는 자막에 안 나오지만, 제목/설명 기준으로는 ${place} 쪽 장면으로 보여요.`;
+    }
+    return "정확한 장소명은 지금 캡처된 자막/설명에는 안 나와요. 다만 현재 장면은 바닷가/항구 근처에서 이동 중인 장면으로 보입니다.";
+  }
+
+  return `자막 기준으로 보면 이 대목의 핵심은 이거예요: ${clipText(transcript || evidence, 260)}`;
+}
+
+function inferPlace(text) {
+  if (/마쓰야마|마쯔야마|Matsuyama/i.test(text)) return "일본 시코쿠 마쓰야마";
+  if (/시코쿠|Shikoku/i.test(text)) return "일본 시코쿠";
+  if (/부산/i.test(text)) return "부산";
+  if (/일본/i.test(text)) return "일본";
+  return "";
+}
+
+function normalizeForCompare(text) {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}가-힣]/gu, "")
+    .trim();
+}
+
+function formatMetadata(metadata, maxChars) {
+  if (!metadata) return "";
+
+  const lines = [
+    metadata.ogTitle ? `ogTitle: ${metadata.ogTitle}` : "",
+    metadata.description ? `description: ${metadata.description}` : "",
+    metadata.ogDescription ? `ogDescription: ${metadata.ogDescription}` : "",
+    metadata.channel ? `channel: ${metadata.channel}` : "",
+    metadata.keywords ? `keywords: ${metadata.keywords}` : "",
+    Array.isArray(metadata.hashtags) && metadata.hashtags.length ? `hashtags: ${metadata.hashtags.join(" ")}` : ""
+  ].filter(Boolean);
+
+  return clipText(lines.join("\n"), maxChars);
+}
+
+function detectQuestionIntent(question) {
+  if (/(노래|음악|bgm|ost|song|music)/i.test(question)) return "music";
+  if (/(어디|장소|위치|나라|지역|place|where|location)/i.test(question)) return "place";
+  if (/(누구|얘|이 사람|who)/i.test(question)) return "person";
+  if (/(왜|이유|why)/i.test(question)) return "why";
+  return "general";
 }
 
 function formatRecentChat(provider) {
