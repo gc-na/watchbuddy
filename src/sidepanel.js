@@ -2,32 +2,57 @@ const PROVIDERS = {
   "chrome-ai": {
     label: "Chrome built-in AI",
     defaultModel: "Gemini Nano",
-    needsKey: false
+    needsKey: false,
+    budget: {
+      transcriptChars: 2600,
+      pageChars: 400,
+      preferPreview: true
+    }
   },
   openrouter: {
     label: "OpenRouter",
     defaultModel: "openrouter/free",
-    needsKey: true
+    needsKey: true,
+    budget: {
+      transcriptChars: 7000,
+      pageChars: 1200
+    }
   },
   gemini: {
     label: "Google Gemini",
     defaultModel: "gemini-2.5-flash",
-    needsKey: true
+    needsKey: true,
+    budget: {
+      transcriptChars: 9000,
+      pageChars: 1500
+    }
   },
   groq: {
     label: "Groq",
     defaultModel: "llama-3.3-70b-versatile",
-    needsKey: true
+    needsKey: true,
+    budget: {
+      transcriptChars: 7000,
+      pageChars: 1200
+    }
   },
   openai: {
     label: "OpenAI",
     defaultModel: "gpt-5.4-mini",
-    needsKey: true
+    needsKey: true,
+    budget: {
+      transcriptChars: 10000,
+      pageChars: 1800
+    }
   },
   ollama: {
     label: "Ollama local",
     defaultModel: "llama3.2",
-    needsKey: false
+    needsKey: false,
+    budget: {
+      transcriptChars: 4500,
+      pageChars: 800
+    }
   }
 };
 
@@ -199,7 +224,7 @@ async function callAI({ provider, apiKey, model, question, context }) {
     headers,
     body: JSON.stringify({
       model,
-      messages: buildMessages(question, context),
+      messages: buildMessages(question, context, provider),
       temperature: 0.4
     })
   });
@@ -242,7 +267,14 @@ async function callChromeBuiltInAI({ question, context }) {
   });
 
   try {
-    const answer = await session.prompt(buildPrompt(question, context));
+    let answer;
+    try {
+      answer = await session.prompt(buildPrompt(question, context, "chrome-ai"));
+    } catch (error) {
+      if (!/too large|input.*large|token|context/i.test(error.message || "")) throw error;
+      setStatus("Context was large. Retrying with a smaller moment...");
+      answer = await session.prompt(buildMinimalPrompt(question, context));
+    }
     return answer.trim() || "I did not receive a text answer.";
   } finally {
     session.destroy?.();
@@ -250,7 +282,7 @@ async function callChromeBuiltInAI({ question, context }) {
 }
 
 async function callOpenAIResponses({ apiKey, model, question, context }) {
-  const input = buildMessages(question, context).map((message) => ({
+  const input = buildMessages(question, context, "openai").map((message) => ({
     role: message.role === "system" ? "developer" : message.role,
     content: [{ type: "input_text", text: message.content }]
   }));
@@ -285,7 +317,7 @@ async function callGemini({ apiKey, model, question, context }) {
       contents: [
         {
           role: "user",
-          parts: [{ text: buildPrompt(question, context) }]
+          parts: [{ text: buildPrompt(question, context, "gemini") }]
         }
       ],
       generationConfig: {
@@ -305,7 +337,7 @@ async function callGemini({ apiKey, model, question, context }) {
     .trim() || "I did not receive a text answer.";
 }
 
-function buildMessages(question, context) {
+function buildMessages(question, context, provider) {
   return [
     {
       role: "system",
@@ -313,7 +345,7 @@ function buildMessages(question, context) {
     },
     {
       role: "user",
-      content: buildPrompt(question, context)
+      content: buildPrompt(question, context, provider)
     }
   ];
 }
@@ -334,7 +366,11 @@ function syncProviderFields() {
   els.model.disabled = els.provider.value === "chrome-ai";
 }
 
-function buildPrompt(question, context) {
+function buildPrompt(question, context, provider = DEFAULT_PROVIDER) {
+  const budget = PROVIDERS[provider]?.budget || PROVIDERS[DEFAULT_PROVIDER].budget;
+  const transcriptContext = buildTranscriptContext(context, budget);
+  const pageContext = clipText(context.pageText || "", budget.pageChars);
+
   return [
     `Question: ${question}`,
     "",
@@ -348,11 +384,62 @@ function buildPrompt(question, context) {
     "Transcript preview around the current time:",
     context.transcriptPreview || "(No nearby transcript preview captured.)",
     "",
-    "Transcript/captions near or from the video:",
-    context.transcript || "(No transcript captured.)",
+    "Relevant transcript/captions:",
+    transcriptContext || "(No transcript captured.)",
     "",
-    "Visible page text:",
-    context.pageText || "(No page text captured.)"
+    "Small page context:",
+    pageContext || "(No page text captured.)"
+  ].join("\n");
+}
+
+function buildTranscriptContext(context, budget) {
+  const preview = context.transcriptPreview || "";
+  const transcript = context.transcript || "";
+
+  if (budget.preferPreview && preview) {
+    return clipText(preview, budget.transcriptChars);
+  }
+
+  const timedWindow = selectTimedTranscriptWindow(transcript, context.currentTime, budget.transcriptChars);
+  return timedWindow || clipText(preview || transcript, budget.transcriptChars);
+}
+
+function selectTimedTranscriptWindow(transcript, currentTime, maxChars) {
+  if (!transcript || currentTime == null) return "";
+
+  const timedLines = transcript
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/);
+      return match ? { line, seconds: parseTimestamp(match[1]) } : null;
+    })
+    .filter(Boolean);
+
+  if (!timedLines.length) return "";
+
+  const nearby = timedLines.filter((item) => Math.abs(item.seconds - currentTime) <= 150);
+  const candidates = nearby.length ? nearby : timedLines;
+  const anchorIndex = candidates.findIndex((item) => item.seconds >= currentTime);
+  const startIndex = Math.max(0, (anchorIndex === -1 ? 0 : anchorIndex) - 8);
+  const selected = candidates.slice(startIndex, startIndex + 28).map((item) => item.line).join("\n");
+  return clipText(selected, maxChars);
+}
+
+function clipText(text, maxChars) {
+  if (!text || text.length <= maxChars) return text || "";
+  const head = Math.floor(maxChars * 0.7);
+  const tail = maxChars - head - 40;
+  return `${text.slice(0, head).trim()}\n...\n${text.slice(Math.max(0, text.length - tail)).trim()}`;
+}
+
+function buildMinimalPrompt(question, context) {
+  return [
+    `Question: ${question}`,
+    `Title: ${context.title || "Untitled video"}`,
+    `Current time: ${context.currentTime == null ? "unknown" : formatTime(context.currentTime)}`,
+    "",
+    "Only use this nearby transcript:",
+    clipText(context.transcriptPreview || context.transcript || "", 1200)
   ].join("\n");
 }
 
@@ -435,4 +522,10 @@ function formatTime(seconds = 0) {
   const m = Math.floor((value % 3600) / 60);
   const s = value % 60;
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function parseTimestamp(timestamp) {
+  const parts = timestamp.split(":").map((part) => Number.parseInt(part, 10));
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return parts[0] * 60 + parts[1];
 }
