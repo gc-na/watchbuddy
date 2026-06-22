@@ -1,4 +1,9 @@
 const PROVIDERS = {
+  "chrome-ai": {
+    label: "Chrome built-in AI",
+    defaultModel: "Gemini Nano",
+    needsKey: false
+  },
   openrouter: {
     label: "OpenRouter",
     defaultModel: "openrouter/free",
@@ -26,7 +31,7 @@ const PROVIDERS = {
   }
 };
 
-const DEFAULT_PROVIDER = "openrouter";
+const DEFAULT_PROVIDER = "chrome-ai";
 
 const els = {
   apiKey: document.querySelector("#apiKey"),
@@ -166,6 +171,7 @@ function renderNoContext(reason) {
 async function callAI({ provider, apiKey, model, question, context }) {
   if (provider === "gemini") return callGemini({ apiKey, model, question, context });
   if (provider === "openai") return callOpenAIResponses({ apiKey, model, question, context });
+  if (provider === "chrome-ai") return callChromeBuiltInAI({ question, context });
 
   const endpoints = {
     openrouter: "https://openrouter.ai/api/v1/chat/completions",
@@ -198,6 +204,43 @@ async function callAI({ provider, apiKey, model, question, context }) {
   }
 
   return data?.choices?.[0]?.message?.content?.trim() || "I did not receive a text answer.";
+}
+
+async function callChromeBuiltInAI({ question, context }) {
+  if (!("LanguageModel" in globalThis)) {
+    throw new Error("Chrome built-in AI is not available in this browser yet. Try Chrome desktop, enable built-in AI, or use another provider.");
+  }
+
+  const availability = await LanguageModel.availability();
+  if (availability === "unavailable") {
+    throw new Error("Chrome built-in AI is unavailable on this device or Chrome profile.");
+  }
+
+  setStatus(availability === "downloadable" || availability === "downloading"
+    ? "Downloading Chrome's local AI model..."
+    : "Using Chrome's local AI model...");
+
+  const session = await LanguageModel.create({
+    initialPrompts: [
+      {
+        role: "system",
+        content: systemPrompt()
+      }
+    ],
+    monitor(monitor) {
+      monitor.addEventListener("downloadprogress", (event) => {
+        const percent = Math.round((event.loaded || 0) * 100);
+        setStatus(`Downloading Chrome's local AI model... ${percent}%`);
+      });
+    }
+  });
+
+  try {
+    const answer = await session.prompt(buildPrompt(question, context));
+    return answer.trim() || "I did not receive a text answer.";
+  } finally {
+    session.destroy?.();
+  }
 }
 
 async function callOpenAIResponses({ apiKey, model, question, context }) {
@@ -281,6 +324,8 @@ function systemPrompt() {
 function syncProviderFields() {
   const provider = PROVIDERS[els.provider.value];
   els.apiKey.placeholder = provider.needsKey ? "Paste provider API key" : "Not needed for Ollama";
+  els.apiKey.disabled = !provider.needsKey;
+  els.model.disabled = els.provider.value === "chrome-ai";
 }
 
 function buildPrompt(question, context) {

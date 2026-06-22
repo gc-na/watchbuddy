@@ -10,9 +10,9 @@ I built WatchBuddy, a tiny Chrome extension that lets you ask an AI about the vi
 
 It reads the current timestamp, visible captions/transcripts, and page context, then answers like a study buddy, event curator, or friend watching with you.
 
-The first MVP supports YouTube best, with best-effort context capture for Netflix, Udemy, and Coursera. It supports OpenRouter, Gemini, Groq, OpenAI, and local Ollama from one settings panel.
+The first MVP supports YouTube best, with best-effort context capture for Netflix, Udemy, and Coursera. It supports Chrome built-in AI, OpenRouter, Gemini, Groq, OpenAI, and local Ollama from one settings panel.
 
-MIT licensed. Bring your own API key, or use local Ollama. No build step.
+MIT licensed. Use Chrome built-in AI when available, bring your own API key, or use local Ollama. No build step.
 
 ## Demo ideas
 

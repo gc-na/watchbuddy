@@ -33,11 +33,14 @@ Use it for:
 
 WatchBuddy supports several providers from the settings panel:
 
+- Chrome built-in AI with Gemini Nano, when available in the user's Chrome
 - OpenRouter with `openrouter/free` as the default free-model router
 - Google Gemini with `gemini-2.5-flash`
 - Groq with `llama-3.3-70b-versatile`
 - OpenAI with `gpt-5.4-mini`
 - Ollama local with `llama3.2`
+
+Chrome built-in AI is the best zero-key path when it is available. It runs through Chrome's Prompt API and may download Gemini Nano the first time a user asks a question. Availability depends on Chrome version, device support, profile settings, and rollout status.
 
 Hosted providers still need each user's own API key. That keeps the extension safe to publish without leaking a shared key. If you want a true "free for users, limited by IP" mode, run a small backend proxy that owns the provider key, rate-limits by IP, and forwards approved requests to the model provider.
 
