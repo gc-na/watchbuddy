@@ -81,6 +81,7 @@ const els = {
 
 let latestContext = null;
 let recognition = null;
+let chatHistory = [];
 
 init();
 
@@ -156,10 +157,15 @@ async function askQuestion(question) {
       question,
       context: latestContext
     });
+    rememberMessage("user", question);
     addMessage("assistant", answer);
+    rememberMessage("assistant", answer);
     setStatus("Ready.");
   } catch (error) {
-    addMessage("assistant", `I hit an error: ${error.message}`);
+    const errorText = `I hit an error: ${error.message}`;
+    rememberMessage("user", question);
+    addMessage("assistant", errorText);
+    rememberMessage("assistant", errorText);
     setStatus("Something went wrong.");
   } finally {
     setBusy(false);
@@ -352,10 +358,12 @@ function buildMessages(question, context, provider) {
 
 function systemPrompt() {
   return [
-    "You are WatchBuddy, a friendly AI companion for people watching videos.",
-    "Use the supplied video context, transcript, current timestamp, and user question.",
-    "If the transcript is incomplete, say what you can infer and ask for the transcript panel or captions if needed.",
-    "Be concise, specific, and helpful. Match the user's language."
+    "You are WatchBuddy, an AI companion watching the same video as the user.",
+    "Answer from the current timestamp, transcript, title, and recent chat.",
+    "Resolve casual references like '얘', '이 사람', '이거', '그거', '그래서' to the main speaker, subject, or moment in the current video unless the chat clearly says otherwise.",
+    "Trust the transcript over generic page text. If the transcript contains the answer, do not say the information is limited.",
+    "Answer in the user's language. If the user writes Korean, answer naturally in Korean.",
+    "Be short, direct, and conversational."
   ].join(" ");
 }
 
@@ -370,9 +378,16 @@ function buildPrompt(question, context, provider = DEFAULT_PROVIDER) {
   const budget = PROVIDERS[provider]?.budget || PROVIDERS[DEFAULT_PROVIDER].budget;
   const transcriptContext = buildTranscriptContext(context, budget);
   const pageContext = clipText(context.pageText || "", budget.pageChars);
+  const languageHint = detectLanguage(question);
+  const recentChat = formatRecentChat(provider);
 
   return [
-    `Question: ${question}`,
+    `User language: ${languageHint}`,
+    `Answer language: ${languageHint}`,
+    `User question: ${question}`,
+    "",
+    "Conversation so far:",
+    recentChat || "(No previous chat.)",
     "",
     "Video context:",
     `Platform: ${context.platform}`,
@@ -434,13 +449,32 @@ function clipText(text, maxChars) {
 
 function buildMinimalPrompt(question, context) {
   return [
-    `Question: ${question}`,
+    `Answer in: ${detectLanguage(question)}`,
+    `User question: ${question}`,
     `Title: ${context.title || "Untitled video"}`,
     `Current time: ${context.currentTime == null ? "unknown" : formatTime(context.currentTime)}`,
+    "Resolve '얘/이 사람/이거/그거' as the main speaker or subject in this video moment.",
     "",
     "Only use this nearby transcript:",
     clipText(context.transcriptPreview || context.transcript || "", 1200)
   ].join("\n");
+}
+
+function formatRecentChat(provider) {
+  const budget = provider === "chrome-ai" ? 700 : 1600;
+  const recent = chatHistory.slice(-6).map((message) => `${message.role}: ${message.text}`).join("\n");
+  return clipText(recent, budget);
+}
+
+function rememberMessage(role, text) {
+  chatHistory.push({ role, text });
+  if (chatHistory.length > 12) {
+    chatHistory = chatHistory.slice(-12);
+  }
+}
+
+function detectLanguage(text) {
+  return /[가-힣]/.test(text) ? "Korean" : "English";
 }
 
 function extractResponseText(data) {
