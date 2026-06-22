@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "WatchBuddy",
+  "description": "Talk with an AI buddy that understands the video you are watching.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Open WatchBuddy"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel.html"
+  },
+  "commands": {
+    "open-watchbuddy": {
+      "suggested_key": {
+        "default": "Alt+W",
+        "mac": "Alt+W"
+      },
+      "description": "Open WatchBuddy"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://youtube.com/*",
+        "https://www.netflix.com/*",
+        "https://*.udemy.com/*",
+        "https://*.coursera.org/*"
+      ],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "https://api.openai.com/*",
+    "https://www.youtube.com/*",
+    "https://youtube.com/*",
+    "https://www.netflix.com/*",
+    "https://*.udemy.com/*",
+    "https://*.coursera.org/*"
+  ],
+  "permissions": [
+    "activeTab",
+    "commands",
+    "sidePanel",
+    "storage",
+    "tabs"
+  ]
+}
