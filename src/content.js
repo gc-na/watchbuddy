@@ -10,11 +10,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-function getWatchContext() {
+async function getWatchContext() {
   const video = findActiveVideo();
   const platform = detectPlatform();
   const currentTime = video?.currentTime ?? 0;
-  const transcript = collectTranscript(platform, currentTime);
+  const transcript = await collectTranscript(platform, currentTime);
   const pageText = compactText(document.body?.innerText || "").slice(0, MAX_TEXT_CHARS);
 
   return {
@@ -52,8 +52,12 @@ function detectPlatform() {
   return "Video page";
 }
 
-function collectTranscript(platform, currentTime) {
+async function collectTranscript(platform, currentTime) {
   const textTrackText = collectTextTracks(currentTime);
+  if (platform === "YouTube") {
+    await ensureYouTubeTranscriptOpen();
+  }
+
   const pageTranscript = platform === "YouTube"
     ? collectYouTubeTranscript(currentTime)
     : collectLikelyTranscriptNodes();
@@ -118,10 +122,18 @@ function collectYouTubeTimedTranscriptRows() {
   const selectors = [
     "ytd-transcript-segment-renderer",
     "ytm-transcript-segment-renderer",
+    "macro-markers-panel-item-view-model[role='button']",
+    "ytd-engagement-panel-section-list-renderer[target-id='engagement-panel-searchable-transcript'] macro-markers-panel-item-view-model",
     "ytd-transcript-segment-list-renderer [role='button']",
+    "ytd-transcript-segment-list-renderer button",
     "ytd-transcript-search-panel-renderer [role='button']",
+    "ytd-transcript-search-panel-renderer button",
     "ytd-engagement-panel-section-list-renderer[target-id='engagement-panel-searchable-transcript'] [role='button']",
-    "[class*='transcript'] [role='button']"
+    "ytd-engagement-panel-section-list-renderer[target-id='engagement-panel-searchable-transcript'] button",
+    "#panels macro-markers-panel-item-view-model[role='button']",
+    "#panels [role='button']",
+    "[class*='transcript'] [role='button']",
+    "[class*='transcript'] button"
   ];
 
   const rows = [];
@@ -148,7 +160,8 @@ function parseTranscriptRow(text) {
   const match = text.match(/(?:^|\s)(\d{1,2}:\d{2}(?::\d{2})?)(?:\s|$)([\s\S]*)/);
   if (!match) return null;
 
-  const rowText = compactText(text.replace(match[1], ""));
+  const rawText = compactText(text.replace(match[1], ""));
+  const rowText = compactText(rawText.replace(/^\d{1,2}분\s*\d{1,2}초\s*/, "").replace(/^\d{1,2}초\s*/, ""));
   if (!rowText) return null;
 
   return {
@@ -156,6 +169,37 @@ function parseTranscriptRow(text) {
     seconds: parseTimestamp(match[1]),
     text: rowText
   };
+}
+
+async function ensureYouTubeTranscriptOpen() {
+  if (collectYouTubeTimedTranscriptRows().length) return;
+
+  const showTranscriptButton = findButtonByText(["스크립트 표시", "Show transcript"]);
+  if (showTranscriptButton) {
+    showTranscriptButton.click();
+    await wait(1200);
+    return;
+  }
+
+  const expandDescriptionButton = findButtonByText(["...더보기", "더보기", "...more", "more"]);
+  if (expandDescriptionButton) {
+    expandDescriptionButton.click();
+    await wait(700);
+  }
+
+  const retryButton = findButtonByText(["스크립트 표시", "Show transcript"]);
+  if (retryButton) {
+    retryButton.click();
+    await wait(1200);
+  }
+}
+
+function findButtonByText(labels) {
+  const buttons = [...document.querySelectorAll("button, [role='button']")];
+  return buttons.find((button) => {
+    const text = compactText(button.innerText || button.textContent || button.getAttribute("aria-label") || "");
+    return labels.some((label) => text.toLowerCase().includes(label.toLowerCase()));
+  });
 }
 
 function formatTimedTranscriptRows(rows, currentTime) {
@@ -229,6 +273,10 @@ function parseTimestamp(timestamp) {
   const parts = timestamp.split(":").map((part) => Number.parseInt(part, 10));
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   return parts[0] * 60 + parts[1];
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatTime(seconds = 0) {
