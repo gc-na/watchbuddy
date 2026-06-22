@@ -37,6 +37,8 @@ const els = {
   apiKey: document.querySelector("#apiKey"),
   composer: document.querySelector("#composer"),
   contextCard: document.querySelector("#contextCard"),
+  contextPreview: document.querySelector("#contextPreview"),
+  contextPreviewWrap: document.querySelector("#contextPreviewWrap"),
   messages: document.querySelector("#messages"),
   model: document.querySelector("#model"),
   platform: document.querySelector("#platform"),
@@ -158,6 +160,8 @@ function renderContext(context) {
   els.platform.textContent = context.platform || "Video page";
   els.videoTitle.textContent = context.title || "Untitled video";
   els.timestamp.textContent = duration ? `${time} / ${duration}` : time;
+  els.contextPreview.textContent = context.transcriptPreview || context.transcript?.slice(0, 900) || "";
+  els.contextPreviewWrap.hidden = !els.contextPreview.textContent;
   setStatus(context.transcript ? "Context captured." : "Context captured. Transcript may be limited.");
 }
 
@@ -165,6 +169,8 @@ function renderNoContext(reason) {
   els.platform.textContent = "No supported video page";
   els.videoTitle.textContent = "Open YouTube, Netflix, Udemy, or Coursera.";
   els.timestamp.textContent = "";
+  els.contextPreview.textContent = "";
+  els.contextPreviewWrap.hidden = true;
   setStatus(reason || "Open a supported video tab.");
 }
 
@@ -338,6 +344,9 @@ function buildPrompt(question, context) {
     `URL: ${context.url}`,
     `Current time: ${context.currentTime == null ? "unknown" : formatTime(context.currentTime)}`,
     `Duration: ${context.duration == null ? "unknown" : formatTime(context.duration)}`,
+    "",
+    "Transcript preview around the current time:",
+    context.transcriptPreview || "(No nearby transcript preview captured.)",
     "",
     "Transcript/captions near or from the video:",
     context.transcript || "(No transcript captured.)",

@@ -13,7 +13,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 function getWatchContext() {
   const video = findActiveVideo();
   const platform = detectPlatform();
-  const transcript = collectTranscript(platform, video?.currentTime ?? 0);
+  const currentTime = video?.currentTime ?? 0;
+  const transcript = collectTranscript(platform, currentTime);
   const pageText = compactText(document.body?.innerText || "").slice(0, MAX_TEXT_CHARS);
 
   return {
@@ -24,6 +25,7 @@ function getWatchContext() {
     duration: video ? video.duration : null,
     paused: video ? video.paused : null,
     transcript,
+    transcriptPreview: summarizeTranscriptPreview(transcript, currentTime),
     pageText
   };
 }
@@ -53,7 +55,7 @@ function detectPlatform() {
 function collectTranscript(platform, currentTime) {
   const textTrackText = collectTextTracks(currentTime);
   const pageTranscript = platform === "YouTube"
-    ? collectYouTubeTranscript()
+    ? collectYouTubeTranscript(currentTime)
     : collectLikelyTranscriptNodes();
 
   const visibleCaptions = collectVisibleCaptions();
@@ -82,19 +84,87 @@ function collectTextTracks(currentTime) {
   return snippets.join("\n");
 }
 
-function collectYouTubeTranscript() {
-  const candidates = [
-    ...document.querySelectorAll("ytd-transcript-segment-renderer"),
-    ...document.querySelectorAll("[class*='transcript']"),
-    ...document.querySelectorAll("yt-formatted-string")
+function collectYouTubeTranscript(currentTime) {
+  const timedRows = collectYouTubeTimedTranscriptRows();
+  if (timedRows.length) {
+    return formatTimedTranscriptRows(timedRows, currentTime);
+  }
+
+  const transcriptContainers = [
+    ...document.querySelectorAll("ytd-transcript-renderer"),
+    ...document.querySelectorAll("ytd-transcript-search-panel-renderer"),
+    ...document.querySelectorAll("ytd-engagement-panel-section-list-renderer[target-id='engagement-panel-searchable-transcript']"),
+    ...document.querySelectorAll("[class*='transcript']")
   ];
 
-  return compactText(
-    candidates
+  const containerText = compactText(
+    transcriptContainers
       .map((node) => node.innerText || node.textContent || "")
-      .filter((text) => text.trim().length > 20)
+      .filter((text) => text.trim().length > 8)
       .join("\n")
   );
+
+  if (containerText) return containerText;
+
+  return compactText(
+    [...document.querySelectorAll("yt-formatted-string")]
+      .map((node) => node.innerText || node.textContent || "")
+      .filter((text) => text.trim().length > 5)
+      .join("\n")
+  );
+}
+
+function collectYouTubeTimedTranscriptRows() {
+  const selectors = [
+    "ytd-transcript-segment-renderer",
+    "ytm-transcript-segment-renderer",
+    "ytd-transcript-segment-list-renderer [role='button']",
+    "ytd-transcript-search-panel-renderer [role='button']",
+    "ytd-engagement-panel-section-list-renderer[target-id='engagement-panel-searchable-transcript'] [role='button']",
+    "[class*='transcript'] [role='button']"
+  ];
+
+  const rows = [];
+  const seen = new Set();
+  for (const selector of selectors) {
+    for (const node of document.querySelectorAll(selector)) {
+      const text = compactText(node.innerText || node.textContent || "");
+      const row = parseTranscriptRow(text);
+      if (!row) continue;
+
+      const key = `${row.time}|${row.text}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+    }
+  }
+
+  return rows.sort((a, b) => a.seconds - b.seconds);
+}
+
+function parseTranscriptRow(text) {
+  if (!text) return null;
+
+  const match = text.match(/(?:^|\s)(\d{1,2}:\d{2}(?::\d{2})?)(?:\s|$)([\s\S]*)/);
+  if (!match) return null;
+
+  const rowText = compactText(text.replace(match[1], ""));
+  if (!rowText) return null;
+
+  return {
+    time: match[1],
+    seconds: parseTimestamp(match[1]),
+    text: rowText
+  };
+}
+
+function formatTimedTranscriptRows(rows, currentTime) {
+  const nearbyRows = rows.filter((row) => Math.abs(row.seconds - currentTime) <= 240);
+  const selectedRows = nearbyRows.length >= 4 ? nearbyRows : rows;
+
+  return selectedRows
+    .map((row) => `[${row.time}] ${row.text}`)
+    .join("\n");
 }
 
 function collectLikelyTranscriptNodes() {
@@ -139,6 +209,26 @@ function compactText(text) {
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function summarizeTranscriptPreview(transcript, currentTime) {
+  const lines = transcript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const nearby = lines.filter((line) => {
+    const match = line.match(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/);
+    return match && Math.abs(parseTimestamp(match[1]) - currentTime) <= 90;
+  });
+
+  return (nearby.length ? nearby : lines).slice(0, 8).join("\n");
+}
+
+function parseTimestamp(timestamp) {
+  const parts = timestamp.split(":").map((part) => Number.parseInt(part, 10));
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return parts[0] * 60 + parts[1];
 }
 
 function formatTime(seconds = 0) {

@@ -136,6 +136,24 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.context-preview {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.context-preview summary {
+  cursor: pointer;
+}
+
+.context-preview pre {
+  max-height: 140px;
+  overflow: auto;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  color: var(--ink);
+  font-size: 12px;
+}
+
 .messages {
   display: flex;
   flex-direction: column;
