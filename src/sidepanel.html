@@ -18,8 +18,18 @@
 
       <section id="settings" class="settings" hidden>
         <label>
-          OpenAI API key
-          <input id="apiKey" type="password" autocomplete="off" placeholder="sk-..." />
+          Provider
+          <select id="provider">
+            <option value="openrouter">OpenRouter free/router</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="groq">Groq</option>
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama local</option>
+          </select>
+        </label>
+        <label>
+          API key
+          <input id="apiKey" type="password" autocomplete="off" placeholder="Not needed for Ollama" />
         </label>
         <label>
           Model

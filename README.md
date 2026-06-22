@@ -25,8 +25,30 @@ Use it for:
 - Current video timestamp and page context capture
 - YouTube transcript/caption extraction, best effort
 - Netflix, Udemy, and Coursera page/video context extraction, best effort
-- BYOK OpenAI API key storage in `chrome.storage.sync`
+- Multi-provider AI settings
+- BYOK API key storage in `chrome.storage.sync`
 - No build step
+
+## AI providers
+
+WatchBuddy supports several providers from the settings panel:
+
+- OpenRouter with `openrouter/free` as the default free-model router
+- Google Gemini with `gemini-2.5-flash`
+- Groq with `llama-3.3-70b-versatile`
+- OpenAI with `gpt-5.4-mini`
+- Ollama local with `llama3.2`
+
+Hosted providers still need each user's own API key. That keeps the extension safe to publish without leaking a shared key. If you want a true "free for users, limited by IP" mode, run a small backend proxy that owns the provider key, rate-limits by IP, and forwards approved requests to the model provider.
+
+For Ollama, run a local model first:
+
+```bash
+ollama pull llama3.2
+ollama serve
+```
+
+Depending on your Ollama setup, you may also need to allow Chrome extension origins.
 
 ## Install locally
 
@@ -37,7 +59,7 @@ Use it for:
 5. Select the `watchbuddy` folder.
 6. Open a supported video page.
 7. Click the WatchBuddy extension icon or press `Alt+W`.
-8. Add your OpenAI API key in settings.
+8. Pick an AI provider and add its API key in settings.
 
 ## Tips
 
@@ -56,7 +78,7 @@ For best results on YouTube, open the transcript panel or enable captions before
 
 ## Privacy
 
-WatchBuddy runs locally in your browser. It sends the captured page/video context and your question to the OpenAI API only when you ask a question. Your API key is stored in Chrome sync storage.
+WatchBuddy runs locally in your browser. It sends the captured page/video context and your question to your selected AI provider only when you ask a question. Your API key is stored in Chrome sync storage.
 
 ## License
 

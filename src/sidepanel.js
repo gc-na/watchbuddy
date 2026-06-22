@@ -1,4 +1,32 @@
-const DEFAULT_MODEL = "gpt-5.5";
+const PROVIDERS = {
+  openrouter: {
+    label: "OpenRouter",
+    defaultModel: "openrouter/free",
+    needsKey: true
+  },
+  gemini: {
+    label: "Google Gemini",
+    defaultModel: "gemini-2.5-flash",
+    needsKey: true
+  },
+  groq: {
+    label: "Groq",
+    defaultModel: "llama-3.3-70b-versatile",
+    needsKey: true
+  },
+  openai: {
+    label: "OpenAI",
+    defaultModel: "gpt-5.4-mini",
+    needsKey: true
+  },
+  ollama: {
+    label: "Ollama local",
+    defaultModel: "llama3.2",
+    needsKey: false
+  }
+};
+
+const DEFAULT_PROVIDER = "openrouter";
 
 const els = {
   apiKey: document.querySelector("#apiKey"),
@@ -7,6 +35,7 @@ const els = {
   messages: document.querySelector("#messages"),
   model: document.querySelector("#model"),
   platform: document.querySelector("#platform"),
+  provider: document.querySelector("#provider"),
   question: document.querySelector("#question"),
   saveSettings: document.querySelector("#saveSettings"),
   sendButton: document.querySelector("#sendButton"),
@@ -24,11 +53,14 @@ let recognition = null;
 init();
 
 async function init() {
-  const saved = await chrome.storage.sync.get(["openaiApiKey", "model"]);
-  els.apiKey.value = saved.openaiApiKey || "";
-  els.model.value = saved.model || DEFAULT_MODEL;
+  const saved = await chrome.storage.sync.get(["apiKey", "openaiApiKey", "model", "provider"]);
+  const provider = saved.provider || DEFAULT_PROVIDER;
+  els.provider.value = provider;
+  els.apiKey.value = saved.apiKey || saved.openaiApiKey || "";
+  els.model.value = saved.model || PROVIDERS[provider].defaultModel;
+  syncProviderFields();
 
-  els.settings.hidden = Boolean(saved.openaiApiKey);
+  els.settings.hidden = Boolean(saved.apiKey || saved.openaiApiKey || !PROVIDERS[provider].needsKey);
   wireEvents();
   addMessage("assistant", "Hi, I am ready. Open a video, then ask me anything about the part you are watching.");
   try {
@@ -45,11 +77,17 @@ function wireEvents() {
 
   els.saveSettings.addEventListener("click", async () => {
     await chrome.storage.sync.set({
-      openaiApiKey: els.apiKey.value.trim(),
-      model: els.model.value.trim() || DEFAULT_MODEL
+      provider: els.provider.value,
+      apiKey: els.apiKey.value.trim(),
+      model: els.model.value.trim() || PROVIDERS[els.provider.value].defaultModel
     });
     els.settings.hidden = true;
     setStatus("Settings saved.");
+  });
+
+  els.provider.addEventListener("change", () => {
+    els.model.value = PROVIDERS[els.provider.value].defaultModel;
+    syncProviderFields();
   });
 
   els.composer.addEventListener("submit", async (event) => {
@@ -63,10 +101,13 @@ function wireEvents() {
 async function askQuestion(question) {
   if (!question) return;
 
-  const { openaiApiKey, model } = await chrome.storage.sync.get(["openaiApiKey", "model"]);
-  if (!openaiApiKey) {
+  const { apiKey, openaiApiKey, model, provider } = await chrome.storage.sync.get(["apiKey", "openaiApiKey", "model", "provider"]);
+  const selectedProvider = provider || DEFAULT_PROVIDER;
+  const selectedApiKey = apiKey || openaiApiKey || "";
+
+  if (PROVIDERS[selectedProvider].needsKey && !selectedApiKey) {
     els.settings.hidden = false;
-    setStatus("Add your OpenAI API key first.");
+    setStatus(`Add your ${PROVIDERS[selectedProvider].label} API key first.`);
     return;
   }
 
@@ -76,9 +117,10 @@ async function askQuestion(question) {
 
   try {
     latestContext = await refreshContext();
-    const answer = await callOpenAI({
-      apiKey: openaiApiKey,
-      model: model || DEFAULT_MODEL,
+    const answer = await callAI({
+      provider: selectedProvider,
+      apiKey: selectedApiKey,
+      model: model || PROVIDERS[selectedProvider].defaultModel,
       question,
       context: latestContext
     });
@@ -121,32 +163,48 @@ function renderNoContext(reason) {
   setStatus(reason || "Open a supported video tab.");
 }
 
-async function callOpenAI({ apiKey, model, question, context }) {
-  const input = [
-    {
-      role: "developer",
-      content: [
-        {
-          type: "input_text",
-          text: [
-            "You are WatchBuddy, a friendly AI companion for people watching videos.",
-            "Use the supplied video context, transcript, current timestamp, and user question.",
-            "If the transcript is incomplete, say what you can infer and ask for the transcript panel or captions if needed.",
-            "Be concise, specific, and helpful. Match the user's language."
-          ].join(" ")
-        }
-      ]
-    },
-    {
-      role: "user",
-      content: [
-        {
-          type: "input_text",
-          text: buildPrompt(question, context)
-        }
-      ]
-    }
-  ];
+async function callAI({ provider, apiKey, model, question, context }) {
+  if (provider === "gemini") return callGemini({ apiKey, model, question, context });
+  if (provider === "openai") return callOpenAIResponses({ apiKey, model, question, context });
+
+  const endpoints = {
+    openrouter: "https://openrouter.ai/api/v1/chat/completions",
+    groq: "https://api.groq.com/openai/v1/chat/completions",
+    ollama: "http://localhost:11434/v1/chat/completions"
+  };
+
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://github.com/watchbuddy/watchbuddy";
+    headers["X-Title"] = "WatchBuddy";
+  }
+
+  const response = await fetch(endpoints[provider], {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model,
+      messages: buildMessages(question, context),
+      temperature: 0.4
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `${PROVIDERS[provider].label} request failed (${response.status})`);
+  }
+
+  return data?.choices?.[0]?.message?.content?.trim() || "I did not receive a text answer.";
+}
+
+async function callOpenAIResponses({ apiKey, model, question, context }) {
+  const input = buildMessages(question, context).map((message) => ({
+    role: message.role === "system" ? "developer" : message.role,
+    content: [{ type: "input_text", text: message.content }]
+  }));
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -154,10 +212,7 @@ async function callOpenAI({ apiKey, model, question, context }) {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model,
-      input
-    })
+    body: JSON.stringify({ model, input })
   });
 
   const data = await response.json().catch(() => ({}));
@@ -165,7 +220,67 @@ async function callOpenAI({ apiKey, model, question, context }) {
     throw new Error(data?.error?.message || `OpenAI request failed (${response.status})`);
   }
 
-  return extractOutputText(data) || "I did not receive a text answer.";
+  return extractResponseText(data) || "I did not receive a text answer.";
+}
+
+async function callGemini({ apiKey, model, question, context }) {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: systemPrompt() }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: buildPrompt(question, context) }]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.4
+      }
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `Gemini request failed (${response.status})`);
+  }
+
+  return (data?.candidates?.[0]?.content?.parts || [])
+    .map((part) => part.text || "")
+    .join("")
+    .trim() || "I did not receive a text answer.";
+}
+
+function buildMessages(question, context) {
+  return [
+    {
+      role: "system",
+      content: systemPrompt()
+    },
+    {
+      role: "user",
+      content: buildPrompt(question, context)
+    }
+  ];
+}
+
+function systemPrompt() {
+  return [
+    "You are WatchBuddy, a friendly AI companion for people watching videos.",
+    "Use the supplied video context, transcript, current timestamp, and user question.",
+    "If the transcript is incomplete, say what you can infer and ask for the transcript panel or captions if needed.",
+    "Be concise, specific, and helpful. Match the user's language."
+  ].join(" ");
+}
+
+function syncProviderFields() {
+  const provider = PROVIDERS[els.provider.value];
+  els.apiKey.placeholder = provider.needsKey ? "Paste provider API key" : "Not needed for Ollama";
 }
 
 function buildPrompt(question, context) {
@@ -187,7 +302,7 @@ function buildPrompt(question, context) {
   ].join("\n");
 }
 
-function extractOutputText(data) {
+function extractResponseText(data) {
   if (data.output_text) return data.output_text.trim();
 
   return (data.output || [])

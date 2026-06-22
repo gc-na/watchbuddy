@@ -37,6 +37,11 @@
   ],
   "host_permissions": [
     "https://api.openai.com/*",
+    "https://openrouter.ai/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.groq.com/*",
+    "http://localhost:11434/*",
+    "http://127.0.0.1:11434/*",
     "https://www.youtube.com/*",
     "https://youtube.com/*",
     "https://www.netflix.com/*",
