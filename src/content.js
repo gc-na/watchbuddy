@@ -1,3 +1,9 @@
+(() => {
+if (globalThis.__WATCHBUDDY_CONTENT_LOADED__) {
+  return;
+}
+globalThis.__WATCHBUDDY_CONTENT_LOADED__ = true;
+
 const MAX_TEXT_CHARS = 12000;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -84,6 +90,7 @@ function detectPlatform() {
   if (host.includes("netflix.com")) return "Netflix";
   if (host.includes("udemy.com")) return "Udemy";
   if (host.includes("coursera.org")) return "Coursera";
+  if (host.includes("bilibili.com")) return "Bilibili";
   return "Video page";
 }
 
@@ -358,3 +365,4 @@ function formatTime(seconds = 0) {
   const s = value % 60;
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
+})();

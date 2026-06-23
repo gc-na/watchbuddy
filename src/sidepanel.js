@@ -80,23 +80,29 @@ const els = {
   settings: document.querySelector("#settings"),
   settingsButton: document.querySelector("#settingsButton"),
   status: document.querySelector("#status"),
+  theme: document.querySelector("#theme"),
   timestamp: document.querySelector("#timestamp"),
   videoTitle: document.querySelector("#videoTitle"),
-  voiceButton: document.querySelector("#voiceButton")
+  voiceButton: document.querySelector("#voiceButton"),
+  voiceReplies: document.querySelector("#voiceReplies")
 };
 
 let latestContext = null;
 let recognition = null;
 let chatHistory = [];
+let speakNextAnswer = false;
 
 init();
 
 async function init() {
-  const saved = await chrome.storage.sync.get(["apiKey", "openaiApiKey", "model", "provider"]);
+  const saved = await chrome.storage.sync.get(["apiKey", "openaiApiKey", "model", "provider", "theme", "voiceReplies"]);
   const provider = saved.provider || DEFAULT_PROVIDER;
   els.provider.value = provider;
   els.apiKey.value = saved.apiKey || saved.openaiApiKey || "";
   els.model.value = saved.model || PROVIDERS[provider].defaultModel;
+  els.theme.value = saved.theme || globalThis.WatchBuddyTheme?.defaultTheme || "system";
+  els.voiceReplies.checked = Boolean(saved.voiceReplies);
+  globalThis.WatchBuddyTheme?.apply(els.theme.value);
   syncProviderFields();
 
   els.settings.hidden = Boolean(saved.apiKey || saved.openaiApiKey || !PROVIDERS[provider].needsKey);
@@ -118,10 +124,16 @@ function wireEvents() {
     await chrome.storage.sync.set({
       provider: els.provider.value,
       apiKey: els.apiKey.value.trim(),
-      model: els.model.value.trim() || PROVIDERS[els.provider.value].defaultModel
+      model: els.model.value.trim() || PROVIDERS[els.provider.value].defaultModel,
+      theme: els.theme.value,
+      voiceReplies: els.voiceReplies.checked
     });
     els.settings.hidden = true;
     setStatus("Settings saved.");
+  });
+
+  els.theme.addEventListener("change", () => {
+    globalThis.WatchBuddyTheme?.apply(els.theme.value);
   });
 
   els.provider.addEventListener("change", () => {
@@ -134,15 +146,27 @@ function wireEvents() {
     await askQuestion(els.question.value.trim());
   });
 
+  els.question.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    if (typeof els.composer.requestSubmit === "function") {
+      els.composer.requestSubmit();
+    } else {
+      els.sendButton.click();
+    }
+  });
+
   els.voiceButton.addEventListener("click", toggleSpeechRecognition);
 }
 
 async function askQuestion(question) {
   if (!question) return;
 
-  const { apiKey, openaiApiKey, model, provider } = await chrome.storage.sync.get(["apiKey", "openaiApiKey", "model", "provider"]);
+  const { apiKey, openaiApiKey, model, provider, voiceReplies } = await chrome.storage.sync.get(["apiKey", "openaiApiKey", "model", "provider", "voiceReplies"]);
   const selectedProvider = provider || DEFAULT_PROVIDER;
   const selectedApiKey = apiKey || openaiApiKey || "";
+  const shouldSpeakAnswer = Boolean(voiceReplies) || speakNextAnswer;
+  speakNextAnswer = false;
 
   if (PROVIDERS[selectedProvider].needsKey && !selectedApiKey) {
     els.settings.hidden = false;
@@ -161,6 +185,7 @@ async function askQuestion(question) {
       rememberMessage("user", question);
       addMessage("assistant", directAnswer);
       rememberMessage("assistant", directAnswer);
+      speakAnswer(directAnswer, question, shouldSpeakAnswer);
       setStatus("Answered from transcript.");
       return;
     }
@@ -175,6 +200,7 @@ async function askQuestion(question) {
     rememberMessage("user", question);
     addMessage("assistant", answer);
     rememberMessage("assistant", answer);
+    speakAnswer(answer, question, shouldSpeakAnswer);
     setStatus("Ready.");
   } catch (error) {
     const errorText = `I hit an error: ${error.message}`;
@@ -191,13 +217,40 @@ async function refreshContext() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab found.");
 
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "WATCHBUDDY_GET_CONTEXT" });
+  let response = await requestContextFromTab(tab.id);
   if (!response?.ok) {
-    throw new Error(response?.error || "Open YouTube, Netflix, Udemy, or Coursera and try again.");
+    await injectContentScript(tab.id);
+    response = await requestContextFromTab(tab.id);
+  }
+
+  if (!response?.ok) {
+    throw new Error(response?.error || "Open a video page and try again.");
   }
 
   renderContext(response.context);
   return response.context;
+}
+
+async function requestContextFromTab(tabId) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, { type: "WATCHBUDDY_GET_CONTEXT" });
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+async function injectContentScript(tabId) {
+  if (!chrome.scripting?.executeScript) return;
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["src/content.js"]
+    });
+    await delay(120);
+  } catch (_error) {
+    // Restricted browser pages and some web stores cannot receive extension scripts.
+  }
 }
 
 function renderContext(context) {
@@ -213,7 +266,7 @@ function renderContext(context) {
 
 function renderNoContext(reason) {
   els.platform.textContent = "No supported video page";
-  els.videoTitle.textContent = "Open YouTube, Netflix, Udemy, or Coursera.";
+  els.videoTitle.textContent = "Open YouTube, Netflix, Udemy, Coursera, Bilibili, or another video page.";
   els.timestamp.textContent = "";
   els.contextPreview.textContent = "";
   els.contextPreviewWrap.hidden = true;
@@ -410,7 +463,7 @@ function systemPrompt() {
 
 function syncProviderFields() {
   const provider = PROVIDERS[els.provider.value];
-  els.apiKey.placeholder = provider.needsKey ? "Paste provider API key" : "Not needed for Ollama";
+  els.apiKey.placeholder = provider.needsKey ? "Paste provider API key" : "No API key needed";
   els.apiKey.disabled = !provider.needsKey;
   els.model.disabled = els.provider.value === "chrome-ai";
 }
@@ -911,9 +964,9 @@ function extractResponseText(data) {
     .trim();
 }
 
-function toggleSpeechRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
+async function toggleSpeechRecognition() {
+  const voice = globalThis.WatchBuddyVoice;
+  if (!voice?.getRecognitionConstructor?.()) {
     setStatus("Speech recognition is not available in this browser.");
     return;
   }
@@ -925,35 +978,64 @@ function toggleSpeechRecognition() {
     return;
   }
 
-  recognition = new SpeechRecognition();
-  recognition.lang = navigator.language || "en-US";
-  recognition.interimResults = false;
-  recognition.continuous = false;
+  try {
+    await voice.requestMicrophoneAccess();
+    voice.stopSpeaking?.();
 
-  recognition.onstart = () => {
-    els.voiceButton.classList.add("listening");
-    setStatus("Listening...");
-  };
+    recognition = voice.createRecognizer({
+      language: navigator.language || "en-US",
+      onStart() {
+        els.voiceButton.classList.add("listening");
+        setStatus("Listening...");
+      },
+      onText(transcript) {
+        els.question.value = transcript;
+        if (transcript) {
+          speakNextAnswer = true;
+          askQuestion(transcript);
+        }
+      },
+      onError(error) {
+        setStatus(formatVoiceError(error));
+      },
+      onEnd() {
+        recognition = null;
+        els.voiceButton.classList.remove("listening");
+      }
+    });
 
-  recognition.onresult = (event) => {
-    const transcript = [...event.results]
-      .map((result) => result[0]?.transcript || "")
-      .join(" ")
-      .trim();
-    els.question.value = transcript;
-    if (transcript) askQuestion(transcript);
-  };
-
-  recognition.onerror = (event) => {
-    setStatus(`Voice input failed: ${event.error}`);
-  };
-
-  recognition.onend = () => {
+    recognition.start();
+  } catch (error) {
     recognition = null;
     els.voiceButton.classList.remove("listening");
-  };
+    setStatus(formatVoiceError(error));
+  }
+}
 
-  recognition.start();
+function speakAnswer(answer, question, enabled) {
+  if (!enabled) return;
+
+  globalThis.WatchBuddyVoice?.speak(answer, {
+    enabled,
+    language: detectLanguage(question)
+  });
+}
+
+function formatVoiceError(error) {
+  const code = String(error?.name || error?.message || error || "unknown");
+  if (/not-allowed|permission|denied|NotAllowedError/i.test(code)) {
+    return "Microphone is blocked. Allow microphone access for WatchBuddy in Chrome, then try again.";
+  }
+  if (/no-speech/i.test(code)) {
+    return "I did not hear anything. Try again closer to the microphone.";
+  }
+  if (/audio-capture/i.test(code)) {
+    return "No microphone was found. Check your input device and try again.";
+  }
+  if (/speech-unavailable/i.test(code)) {
+    return "Speech recognition is not available in this browser.";
+  }
+  return `Voice input failed: ${code}`;
 }
 
 function addMessage(role, text) {
@@ -972,6 +1054,10 @@ function setBusy(isBusy, status = "Working...") {
 
 function setStatus(text) {
   els.status.textContent = text;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatTime(seconds = 0) {

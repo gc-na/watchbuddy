@@ -36,6 +36,18 @@
           Model
           <input id="model" type="text" autocomplete="off" />
         </label>
+        <label>
+          Theme
+          <select id="theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <label class="inline-setting">
+          <input id="voiceReplies" type="checkbox" />
+          Speak answers out loud
+        </label>
         <button id="saveSettings">Save</button>
       </section>
 
@@ -57,6 +69,8 @@
         <button id="sendButton" class="send-button" type="submit">Send</button>
       </form>
     </main>
+    <script src="theme.js"></script>
+    <script src="voice.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

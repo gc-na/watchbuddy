@@ -6,16 +6,20 @@
   "license": "MIT",
   "scripts": {
     "validate": "node scripts/validate.js",
+    "smoke:chrome": "node scripts/smoke-chrome.js",
     "package": "bash scripts/package.sh"
   },
   "keywords": [
     "chrome-extension",
     "youtube",
     "transcript",
+    "video-ai",
+    "voice-ai",
     "ai",
     "gemini-nano",
     "openrouter",
     "ollama",
+    "bilibili",
     "watch-party",
     "study-buddy"
   ]

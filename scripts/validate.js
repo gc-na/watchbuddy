@@ -5,6 +5,8 @@ const { execFileSync } = require("child_process");
 execFileSync(process.execPath, ["--check", "src/background.js"], { stdio: "inherit" });
 execFileSync(process.execPath, ["--check", "src/content.js"], { stdio: "inherit" });
 execFileSync(process.execPath, ["--check", "src/sidepanel.js"], { stdio: "inherit" });
+execFileSync(process.execPath, ["--check", "src/theme.js"], { stdio: "inherit" });
+execFileSync(process.execPath, ["--check", "src/voice.js"], { stdio: "inherit" });
 
 JSON.parse(fs.readFileSync("manifest.json", "utf8"));
 
@@ -102,7 +104,8 @@ const checks = {
     },
     currentTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.",
     nearbyTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다."
-  }).includes("프랑스 파리")
+  }).includes("프랑스 파리"),
+  voiceNotAllowedIsFriendly: context.formatVoiceError("not-allowed").includes("Microphone is blocked")
 };
 
 const failures = Object.entries(checks).filter(([, passed]) => !passed);

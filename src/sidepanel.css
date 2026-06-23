@@ -2,12 +2,54 @@
   color-scheme: light;
   --bg: #f7f5ef;
   --panel: #ffffff;
+  --input: #fffdf8;
   --ink: #171717;
   --muted: #6b665c;
   --line: #ded8cc;
   --accent: #2563eb;
   --accent-ink: #ffffff;
   --soft: #eaf0ff;
+  --soft-line: #cbd8ff;
+  --listening: #fee2e2;
+  --listening-line: #fca5a5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #101010;
+    --panel: #18181b;
+    --input: #111113;
+    --ink: #f4f4f5;
+    --muted: #a1a1aa;
+    --line: #303036;
+    --accent: #7c9cff;
+    --accent-ink: #0b1020;
+    --soft: #17213b;
+    --soft-line: #28427f;
+    --listening: #3b171d;
+    --listening-line: #b91c1c;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101010;
+  --panel: #18181b;
+  --input: #111113;
+  --ink: #f4f4f5;
+  --muted: #a1a1aa;
+  --line: #303036;
+  --accent: #7c9cff;
+  --accent-ink: #0b1020;
+  --soft: #17213b;
+  --soft-line: #28427f;
+  --listening: #3b171d;
+  --listening-line: #b91c1c;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {
@@ -102,15 +144,28 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
-  background: #fffdf8;
+  background: var(--input);
   color: var(--ink);
   outline: none;
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.13);
+}
+
+.inline-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.inline-setting input {
+  width: auto;
 }
 
 .settings button,
@@ -176,7 +231,7 @@ textarea:focus {
 .message.user {
   align-self: end;
   background: var(--soft);
-  border-color: #cbd8ff;
+  border-color: var(--soft-line);
 }
 
 .message.assistant {
@@ -196,8 +251,8 @@ textarea:focus {
 }
 
 .round-button.listening {
-  background: #fee2e2;
-  border-color: #fca5a5;
+  background: var(--listening);
+  border-color: var(--listening-line);
 }
 
 textarea {
