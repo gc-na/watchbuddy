@@ -71,10 +71,15 @@ const sample = {
 const checks = {
   promptUsesKoreanRules: context.buildPrompt("여기가 어디냐", sample, "chrome-ai").includes("질문을 반복하지 말고"),
   promptIncludesMetadata: context.buildPrompt("여기가 어디냐", sample, "chrome-ai").includes("마쓰야마"),
+  englishDirectiveOverridesKoreanQuestion: context.detectAnswerLanguage("영어로 답해줘. 여기가 어디냐") === "English",
+  englishPromptLanguageOverride: context.buildPrompt("Please answer in English. 여기가 어디냐", sample, "chrome-ai").includes("Answer language: English"),
+  englishPromptTranslatesKoreanSource: context.buildPrompt("영어로 답해줘. 여기가 어디냐", sample, "chrome-ai").includes("Write the answer in English"),
   rejectsMusicEcho: context.needsQualityRetry("음악이 뭐지? 🎧", "이 노래가 뭐지"),
   rejectsPlaceEcho: context.needsQualityRetry("여기 여기가 어디예요?", "여기가 어디냐"),
+  rejectsKoreanWhenEnglishRequested: context.needsQualityRetry("제목/설명 기준으로는 일본 시코쿠 마쓰야마 쪽이에요.", "Please answer in English. 여기가 어디냐"),
   musicFallbackIsGrounded: context.buildFallbackAnswer("이 노래가 뭐지", sample).includes("곡명"),
   placeFallbackUsesMetadata: context.buildFallbackAnswer("여기가 어디냐", sample).includes("마쓰야마"),
+  englishFallbackUsesEnglishPlace: context.buildFallbackAnswer("Please answer in English. 여기가 어디냐", sample).includes("Matsuyama"),
   directMeetingAnswer: context.answerDirectlyFromContext("뭐랑 만날거 같다고?", {
     ...sample,
     currentTranscript: "[30:27] 쥐하고 만날 것 같아 쥐하고 만나면 대형인데",
@@ -96,6 +101,11 @@ const checks = {
     currentTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.",
     nearbyTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.\n[3:01] 수백 명의 사람들이 주식 가격을 외치고 있었습니다."
   }).includes("파리 증권 거래소"),
+  englishSituationDelegatesForTranslation: context.answerDirectlyFromContext("Answer in English. What's going on?", {
+    ...sample,
+    currentTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.",
+    nearbyTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다."
+  }) === "",
   directParisPlaceAnswer: context.answerDirectlyFromContext("여기가 어디야?", {
     ...sample,
     title: "수학자들이 얼마나 돈을 벌고 싶은지 감도 안옴 - YouTube",
@@ -105,6 +115,20 @@ const checks = {
     currentTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.",
     nearbyTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다."
   }).includes("프랑스 파리"),
+  directParisPlaceEnglishAnswer: context.answerDirectlyFromContext("Please answer in English. 여기가 어디야?", {
+    ...sample,
+    title: "수학자들이 얼마나 돈을 벌고 싶은지 감도 안옴 - YouTube",
+    metadata: {
+      description: "뉴턴과 파리 증권 거래소, 금융 시장을 수학으로 모델링한 이야기"
+    },
+    currentTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다.",
+    nearbyTranscript: "[2:51] 파리 증권 거래소에 들어갔는데 거기야말로 뉴턴이 말한 사람들의 광기로 가득찬 현장이었습니다."
+  }).includes("Paris, France"),
+  directPriceEnglishAnswer: context.answerDirectlyFromContext("Answer in English. What was the price?", {
+    ...sample,
+    currentTranscript: "[13:07] 그래서 이런 14만3,000원짜리 세트면 뭐 모수의 1 가격이잖아요.",
+    nearbyTranscript: "[13:04] 테스팅 시그니처는 14만3,000원이에요.\n[13:07] 그래서 이런 14만3,000원짜리 세트면 뭐 모수의 1 가격이잖아요."
+  }).startsWith("According to the caption"),
   voiceNotAllowedIsFriendly: context.formatVoiceError("not-allowed").includes("Microphone is blocked")
 };
 

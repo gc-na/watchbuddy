@@ -1,8 +1,21 @@
 # WatchBuddy
 
+<p align="center">
+  <img src="assets/readme-hero.svg" alt="WatchBuddy: talk to the video you are watching" width="100%" />
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-111827?style=for-the-badge" /></a>
+  <img alt="Chrome MV3" src="https://img.shields.io/badge/Chrome-MV3-2563EB?style=for-the-badge" />
+  <img alt="No build step" src="https://img.shields.io/badge/no%20build%20step-yes-16A34A?style=for-the-badge" />
+  <img alt="BYOK and local AI" src="https://img.shields.io/badge/AI-BYOK%20%2B%20local-F59E0B?style=for-the-badge" />
+</p>
+
 AI co-watching for YouTube, courses, keynotes, streaming videos, and the long internet rabbit holes we all pretend are "research."
 
 WatchBuddy is a Chrome extension that reads the current video timestamp, transcript, captions, page metadata, and recent chat so you can ask questions while watching.
+
+If you have ever paused a video to ask "wait, what did they mean by that?", this is the tiny side panel for that moment.
 
 It is built for moments like:
 
@@ -26,12 +39,25 @@ It is built for moments like:
 - Netflix, Udemy, Coursera, and Bilibili content-script targets
 - User-initiated fallback injection for other video pages
 - Direct answers for short factual transcript questions
+- Explicit answer-language control, even when the transcript is in another language
 - Prompt budgeting for long videos
 - Chrome built-in AI support for a zero-key path
 - OpenRouter, Gemini, Groq, OpenAI, and Ollama provider support
 - Local validation suite for transcript grounding regressions
 - No build step
 - MIT licensed and built to be forked
+
+## Quick Start
+
+```bash
+git clone https://github.com/YOUR_NAME/watchbuddy.git
+cd watchbuddy
+npm run validate
+```
+
+Then open `chrome://extensions`, enable Developer mode, click Load unpacked, and select this folder.
+
+Want to help it spread? Star it, fork it, add one platform adapter, and share a demo timestamp where WatchBuddy actually helped.
 
 ## Why This Exists
 
@@ -143,6 +169,8 @@ WatchBuddy uses two layers:
 2. AI provider calls for explanation, tutoring, summarization, and conversational help.
 
 This keeps short factual answers grounded instead of asking a model to guess from a huge transcript blob.
+
+Language is handled separately from transcript language. If you ask "answer in English" while watching a Korean video, WatchBuddy should answer in English and translate or paraphrase the captured Korean context instead of drifting back to Korean.
 
 ## Privacy
 

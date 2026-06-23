@@ -456,7 +456,7 @@ function systemPrompt() {
     "Trust the transcript over generic page text. If the transcript contains the answer, do not say the information is limited.",
     "You cannot hear raw audio or inspect video pixels unless those details appear in provided text context. For music or exact visual-place questions, state that limitation briefly when needed.",
     "Do not repeat or rephrase the user's question as the answer.",
-    "Answer in the user's language. If the user writes Korean, answer naturally in Korean.",
+    "Follow the requested answer language exactly. If the user asks for English, answer in English even when the transcript, title, page, or recent chat are Korean. If no answer language is requested, match the user's question language.",
     "Be short, direct, and conversational."
   ].join(" ");
 }
@@ -474,27 +474,31 @@ function buildPrompt(question, context, provider = DEFAULT_PROVIDER) {
   const metadataContext = formatMetadata(context.metadata, budget.metadataChars || 1000);
   const pageContext = clipText(context.pageText || "", budget.pageChars);
   const focusedTranscript = buildFocusedTranscript(context, budget);
-  const languageHint = detectLanguage(question);
+  const questionLanguage = detectTextLanguage(question);
+  const answerLanguage = detectAnswerLanguage(question);
   const recentChat = formatRecentChat(provider);
   const intent = detectQuestionIntent(question);
 
   return [
-    languageHint === "Korean" ? "답변 규칙:" : "Answer rules:",
-    languageHint === "Korean"
+    answerLanguage === "Korean" ? "답변 규칙:" : "Answer rules:",
+    answerLanguage === "Korean"
       ? "- 질문을 반복하지 말고, 첫 문장부터 답을 말해."
       : "- Do not repeat the question. Answer directly in the first sentence.",
-    languageHint === "Korean"
+    answerLanguage === "Korean"
       ? "- 근거가 부족하면 '정확히는 컨텍스트에 없다'고 말하고, 지금 알 수 있는 범위를 말해."
       : "- If evidence is missing, say what is missing and what can still be inferred.",
-    languageHint === "Korean"
+    answerLanguage === "Korean"
       ? "- '얘/이 사람/여기/이거/그거'는 현재 영상 장면의 주인공, 장소, 대상이라고 보고 해석해."
       : "- Resolve pronouns to the speaker, place, or object in the current video moment.",
-    languageHint === "Korean"
+    answerLanguage === "Korean"
       ? "- 노래/정확한 장소처럼 화면 글자나 실제 오디오가 필요한 질문은, 제공된 텍스트에 없으면 그 한계를 짧게 밝혀."
       : "- For music or exact visual place questions, mention limitations if the provided text does not contain the answer.",
+    answerLanguage === "Korean"
+      ? "- 사용자가 영어로 답하라고 명시한 경우에는 이 규칙보다 영어 답변 지시가 우선이야."
+      : "- Write the answer in English. If source captions are Korean, translate or paraphrase them instead of answering in Korean.",
     "",
-    `User language: ${languageHint}`,
-    `Answer language: ${languageHint}`,
+    `Question language: ${questionLanguage}`,
+    `Answer language: ${answerLanguage}`,
     `Question intent: ${intent}`,
     `User question: ${question}`,
     "",
@@ -575,13 +579,16 @@ function clipText(text, maxChars) {
 }
 
 function buildMinimalPrompt(question, context) {
+  const answerLanguage = detectAnswerLanguage(question);
   return [
-    `Answer in: ${detectLanguage(question)}`,
+    `Answer in: ${answerLanguage}`,
     `User question: ${question}`,
     `Title: ${context.title || "Untitled video"}`,
     `Current time: ${context.currentTime == null ? "unknown" : formatTime(context.currentTime)}`,
     "Resolve '얘/이 사람/이거/그거' as the main speaker or subject in this video moment.",
-    "Do not repeat the question. If the exact answer is not in the text, say what is missing and what can be inferred.",
+    answerLanguage === "English"
+      ? "Do not answer in Korean. Translate or paraphrase Korean captions into English when needed."
+      : "Do not repeat the question. If the exact answer is not in the text, say what is missing and what can be inferred.",
     "",
     "Only use this nearby transcript:",
     clipText(context.nearbyTranscript || context.transcriptPreview || context.transcript || "", 1200)
@@ -590,6 +597,7 @@ function buildMinimalPrompt(question, context) {
 
 function answerDirectlyFromContext(question, context) {
   const intent = detectQuestionIntent(question);
+  const answerLanguage = detectAnswerLanguage(question);
   const nearbyText = [
     context.currentTranscript,
     context.nearbyTranscript,
@@ -597,71 +605,94 @@ function answerDirectlyFromContext(question, context) {
   ].filter(Boolean).join("\n");
 
   if (intent === "music") {
-    return answerMusicQuestion(question, context, nearbyText);
+    return answerMusicQuestion(question, context, nearbyText, answerLanguage);
   }
 
   if (intent === "place") {
-    return answerPlaceQuestion(question, context, nearbyText);
+    return answerPlaceQuestion(question, context, nearbyText, answerLanguage);
   }
 
-  const situationAnswer = answerSituationQuestion(question, context, nearbyText);
+  const situationAnswer = answerSituationQuestion(question, context, nearbyText, answerLanguage);
   if (situationAnswer) return situationAnswer;
 
-  const meetingAnswer = answerMeetingQuestion(question, nearbyText);
+  const meetingAnswer = answerMeetingQuestion(question, nearbyText, answerLanguage);
   if (meetingAnswer) return meetingAnswer;
 
-  const priceAnswer = answerPriceQuestion(question, nearbyText);
+  const priceAnswer = answerPriceQuestion(question, nearbyText, answerLanguage);
   if (priceAnswer) return priceAnswer;
 
   return "";
 }
 
-function answerMeetingQuestion(question, text) {
-  if (!/(뭐|무엇|누구|누굴|뭘).{0,8}(만나|만날|마주|나와|나올|있을|생길)|만날.{0,8}(뭐|누구|무엇)/.test(question)) {
+function answerMeetingQuestion(question, text, answerLanguage = detectAnswerLanguage(question)) {
+  const asksMeeting = answerLanguage === "Korean"
+    ? /(뭐|무엇|누구|누굴|뭘).{0,8}(만나|만날|마주|나와|나올|있을|생길)|만날.{0,8}(뭐|누구|무엇)/.test(question)
+    : /(what|who).{0,18}(meet|run into|encounter)|meet.{0,18}(what|who)|run into.{0,18}(what|who)/i.test(question);
+
+  if (!asksMeeting) {
     return "";
   }
 
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
   for (const line of lines) {
     const match = line.match(/([가-힣A-Za-z0-9]{1,12})(?:하고|이랑|랑|와|과)\s*만날\s*것\s*같/);
-    if (match) return `${match[1]}랑 만날 것 같다고 했어요.`;
+    if (match) {
+      const subject = localizeKnownTerm(match[1], answerLanguage);
+      return answerLanguage === "Korean"
+        ? `${match[1]}랑 만날 것 같다고 했어요.`
+        : `They said it looked like they might meet ${subject}.`;
+    }
   }
 
   for (const line of lines) {
     const match = line.match(/([가-힣A-Za-z0-9]{1,12})(?:하고|이랑|랑|와|과)\s*만나면/);
-    if (match) return `${match[1]}랑 만난다는 얘기였어요.`;
+    if (match) {
+      const subject = localizeKnownTerm(match[1], answerLanguage);
+      return answerLanguage === "Korean"
+        ? `${match[1]}랑 만난다는 얘기였어요.`
+        : `They were talking about meeting ${subject}.`;
+    }
   }
 
   return "";
 }
 
-function answerPriceQuestion(question, text) {
+function answerPriceQuestion(question, text, answerLanguage = detectAnswerLanguage(question)) {
   if (!/(얼마|가격|몇\s*원|비싸|price|cost)/i.test(question)) return "";
 
   const match = text.match(/(\d+(?:만|천)?(?:\d{1,3})?(?:,\d{3})?\s*원|\d+(?:\.\d+)?\s*만원|\d+(?:\.\d+)?\s*천원)/);
   if (!match) return "";
 
-  return `자막 기준으로는 ${match[1].replace(/\s+/g, "")}이라고 했어요.`;
+  const price = match[1].replace(/\s+/g, "");
+  return answerLanguage === "Korean"
+    ? `자막 기준으로는 ${price}이라고 했어요.`
+    : `According to the caption, it was ${price}.`;
 }
 
-function answerMusicQuestion(_question, context, text) {
+function answerMusicQuestion(_question, context, text, answerLanguage = "Korean") {
   const evidence = [context.title, formatMetadata(context.metadata, 800), text].filter(Boolean).join("\n");
   const quoted = evidence.match(/[\"'“”‘’]([^\"'“”‘’]{2,80})[\"'“”‘’]/);
   if (quoted && /song|music|노래|곡|ost|bgm|album|track/i.test(evidence)) {
-    return `텍스트 컨텍스트 기준으로는 “${quoted[1]}”가 곡명 후보예요.`;
+    return answerLanguage === "Korean"
+      ? `텍스트 컨텍스트 기준으로는 “${quoted[1]}”가 곡명 후보예요.`
+      : `From the captured text, "${quoted[1]}" is the best song-title candidate.`;
   }
 
   const englishTitle = evidence.match(/\b([A-Z][A-Za-z0-9'’.-]{2,}(?:\s+[A-Z][A-Za-z0-9'’.-]{1,}){0,5})\b/);
   if (englishTitle && /song|music|노래|곡|ost|bgm|album|track/i.test(evidence)) {
-    return `텍스트 컨텍스트 기준으로는 “${englishTitle[1]}”가 곡명 후보예요.`;
+    return answerLanguage === "Korean"
+      ? `텍스트 컨텍스트 기준으로는 “${englishTitle[1]}”가 곡명 후보예요.`
+      : `From the captured text, "${englishTitle[1]}" is the best song-title candidate.`;
   }
 
-  return "정확한 곡명은 지금 캡처된 자막/제목/설명에는 안 나와요. WatchBuddy는 현재 배경음 자체를 듣거나 영상 속 글자를 OCR로 읽지는 못해서, 텍스트에 곡명이 없으면 확인할 수 없습니다.";
+  return answerLanguage === "Korean"
+    ? "정확한 곡명은 지금 캡처된 자막/제목/설명에는 안 나와요. WatchBuddy는 현재 배경음 자체를 듣거나 영상 속 글자를 OCR로 읽지는 못해서, 텍스트에 곡명이 없으면 확인할 수 없습니다."
+    : "The exact song title is not in the captured captions, title, or description. WatchBuddy currently cannot listen to raw background audio or OCR the video pixels.";
 }
 
-function answerPlaceQuestion(_question, context, text) {
+function answerPlaceQuestion(_question, context, text, answerLanguage = "Korean") {
   const evidence = [context.title, formatMetadata(context.metadata, 1200), text].filter(Boolean).join("\n");
-  const place = inferPlace(evidence);
+  const place = inferPlace(evidence, answerLanguage);
   if (!place) return "";
 
   const focusedText = [
@@ -670,14 +701,23 @@ function answerPlaceQuestion(_question, context, text) {
   ].join("\n");
 
   if (/해변|바닷가|항구|동굴|사막|마을|역|공항|시장|사원|절|산|섬|언덕|비석|표지판|증권\s*거래소/.test(focusedText)) {
-    return `정확한 지점명까지는 자막에 없지만, 큰 위치는 ${place} 쪽이고 지금 장면은 ${extractSceneHint(focusedText)}인 것으로 보여요.`;
+    const sceneHint = extractSceneHint(focusedText, answerLanguage);
+    return answerLanguage === "Korean"
+      ? `정확한 지점명까지는 자막에 없지만, 큰 위치는 ${place} 쪽이고 지금 장면은 ${sceneHint}인 것으로 보여요.`
+      : `The exact spot is not in the captions, but the broader location appears to be ${place}. This moment looks like ${sceneHint}.`;
   }
 
-  return `제목/설명/자막 기준으로는 ${place} 쪽이에요.`;
+  return answerLanguage === "Korean"
+    ? `제목/설명/자막 기준으로는 ${place} 쪽이에요.`
+    : `Based on the title, description, and captions, it appears to be ${place}.`;
 }
 
-function answerSituationQuestion(question, context, text) {
-  if (!/(지금|여기|이거|이 장면|현재).{0,10}(무슨|뭔|뭐).{0,8}(얘기|상황|하는|중|말)|무슨\s*얘기|뭔\s*얘기/.test(question)) {
+function answerSituationQuestion(question, context, text, answerLanguage = detectAnswerLanguage(question)) {
+  const asksSituation = answerLanguage === "Korean"
+    ? /(지금|여기|이거|이 장면|현재).{0,10}(무슨|뭔|뭐).{0,8}(얘기|상황|하는|중|말)|무슨\s*얘기|뭔\s*얘기/.test(question)
+    : /(what|what's|what is).{0,18}(happening|going on|this part|this scene|this moment|talking about)|current scene|this moment/i.test(question);
+
+  if (!asksSituation) {
     return "";
   }
 
@@ -692,7 +732,11 @@ function answerSituationQuestion(question, context, text) {
     .join(" / ");
 
   if (!useful) return "";
-  return `지금은 이 대목 얘기예요: ${clipInline(useful, 220)}`;
+  if (answerLanguage === "English" && /[가-힣]/.test(useful)) return "";
+
+  return answerLanguage === "Korean"
+    ? `지금은 이 대목 얘기예요: ${clipInline(useful, 220)}`
+    : `This part is about the nearby caption moment: ${clipInline(useful, 220)}`;
 }
 
 function clipInline(text, maxChars) {
@@ -733,31 +777,35 @@ function getFocusedPlainLines(context, text) {
   return parsed.slice(Math.max(0, index - 1), index + 3).map((row) => row.text);
 }
 
-function extractSceneHint(text) {
-  if (/동굴/.test(text)) return "동굴 안";
-  if (/비석|표지판|언덕/.test(text)) return "역사 표지판/언덕 근처";
-  if (/증권\s*거래소/.test(text)) return "증권거래소";
-  if (/해변|바닷가/.test(text)) return "바닷가";
-  if (/항구|배/.test(text)) return "항구 근처";
-  if (/사막/.test(text)) return "사막";
-  if (/역/.test(text)) return "역 근처";
-  if (/마을|소도시/.test(text)) return "마을/소도시";
-  return "현재 보이는 장소";
+function extractSceneHint(text, language = "Korean") {
+  const english = language === "English";
+  if (/동굴/.test(text)) return english ? "inside a cave" : "동굴 안";
+  if (/비석|표지판|언덕/.test(text)) return english ? "near a historical sign or hill" : "역사 표지판/언덕 근처";
+  if (/증권\s*거래소/.test(text)) return english ? "a stock exchange" : "증권거래소";
+  if (/해변|바닷가/.test(text)) return english ? "the beach" : "바닷가";
+  if (/항구|배/.test(text)) return english ? "near a port" : "항구 근처";
+  if (/사막/.test(text)) return english ? "a desert" : "사막";
+  if (/역/.test(text)) return english ? "near a station" : "역 근처";
+  if (/마을|소도시/.test(text)) return english ? "a town or small city" : "마을/소도시";
+  return english ? "the current visible location" : "현재 보이는 장소";
 }
 
 function buildRepairPrompt(question, context, badAnswer, provider = DEFAULT_PROVIDER) {
-  const languageHint = detectLanguage(question);
+  const answerLanguage = detectAnswerLanguage(question);
   const budget = PROVIDERS[provider]?.budget || PROVIDERS[DEFAULT_PROVIDER].budget;
   return [
-    languageHint === "Korean" ? "방금 답변은 품질 기준을 통과하지 못했어." : "The previous answer failed the quality bar.",
+    answerLanguage === "Korean" ? "방금 답변은 품질 기준을 통과하지 못했어." : "The previous answer failed the quality bar.",
     `Bad answer: ${badAnswer || "(empty)"}`,
     "",
-    languageHint === "Korean"
+    answerLanguage === "Korean"
       ? "다시 답해. 질문을 따라 하지 말고, 자막/제목/설명에서 확인되는 사실만 근거로 짧게 답해."
       : "Answer again. Do not echo the question. Use only facts from the title, metadata, transcript, and recent chat.",
-    languageHint === "Korean"
+    answerLanguage === "Korean"
       ? "정확히 모르면 '정확한 곡명/장소는 제공된 텍스트에 없다'고 말하고, 대신 지금 알 수 있는 내용을 말해."
       : "If the exact music/place is absent, say that plainly, then give the best supported context.",
+    answerLanguage === "English"
+      ? "The answer must be in English. Translate or paraphrase Korean source captions instead of replying in Korean."
+      : "",
     "",
     buildPrompt(question, context, provider === "chrome-ai" ? "chrome-ai" : provider).slice(0, budget.transcriptChars + (budget.metadataChars || 1000) + 1800)
   ].join("\n");
@@ -851,8 +899,9 @@ function needsQualityRetry(answer, question) {
   if (!text) return true;
   if (text.length < 12) return true;
 
-  const questionLanguage = detectLanguage(question);
-  if (questionLanguage === "Korean" && !/[가-힣]/.test(text.slice(0, 300))) return true;
+  const answerLanguage = detectAnswerLanguage(question);
+  if (answerLanguage === "Korean" && !/[가-힣]/.test(text.slice(0, 300))) return true;
+  if (answerLanguage === "English" && looksMostlyKorean(text)) return true;
 
   const normalizedAnswer = normalizeForCompare(text);
   const normalizedQuestion = normalizeForCompare(question);
@@ -865,7 +914,7 @@ function needsQualityRetry(answer, question) {
 }
 
 function buildFallbackAnswer(question, context) {
-  const language = detectLanguage(question);
+  const language = detectAnswerLanguage(question);
   const intent = detectQuestionIntent(question);
   const metadata = formatMetadata(context.metadata, 1000);
   const transcript = context.transcriptPreview || selectTimedTranscriptWindow(context.transcript || "", context.currentTime, 1200) || "";
@@ -876,9 +925,11 @@ function buildFallbackAnswer(question, context) {
       return "I cannot identify the exact song from the captured text. WatchBuddy currently sees transcript, title, and page text, but not raw audio or video pixels.";
     }
     if (intent === "place") {
-      return `The exact place is not explicit in the captured text. From the title/metadata, this appears to be ${inferPlace(evidence) || "the location shown in the current travel video"}.`;
+      return `The exact place is not explicit in the captured text. From the title/metadata, this appears to be ${inferPlace(evidence, "English") || "the location shown in the current travel video"}.`;
     }
-    return `From the nearby transcript, the relevant context is: ${clipText(transcript || evidence, 300)}`;
+    return /[가-힣]/.test(transcript || evidence)
+      ? "The captured nearby captions are mostly Korean. I can see the current transcript context, but the AI provider needs to translate it for a precise English explanation."
+      : `From the nearby transcript, the relevant context is: ${clipText(transcript || evidence, 300)}`;
   }
 
   if (intent === "music") {
@@ -886,7 +937,7 @@ function buildFallbackAnswer(question, context) {
   }
 
   if (intent === "place") {
-    const place = inferPlace(evidence);
+    const place = inferPlace(evidence, "Korean");
     if (place) {
       return `정확한 해변/장소명까지는 자막에 안 나오지만, 제목/설명 기준으로는 ${place} 쪽 장면으로 보여요.`;
     }
@@ -896,14 +947,15 @@ function buildFallbackAnswer(question, context) {
   return `자막 기준으로 보면 이 대목의 핵심은 이거예요: ${clipText(transcript || evidence, 260)}`;
 }
 
-function inferPlace(text) {
-  if (/파리|Paris/i.test(text)) return "프랑스 파리";
-  if (/우유니|Uyuni/i.test(text)) return "볼리비아 우유니 사막";
-  if (/볼리비아|Bolivia/i.test(text)) return "볼리비아";
-  if (/마쓰야마|마쯔야마|Matsuyama/i.test(text)) return "일본 시코쿠 마쓰야마";
-  if (/시코쿠|Shikoku/i.test(text)) return "일본 시코쿠";
-  if (/부산/i.test(text)) return "부산";
-  if (/일본/i.test(text)) return "일본";
+function inferPlace(text, language = "Korean") {
+  const english = language === "English";
+  if (/파리|Paris/i.test(text)) return english ? "Paris, France" : "프랑스 파리";
+  if (/우유니|Uyuni/i.test(text)) return english ? "the Uyuni Salt Flat in Bolivia" : "볼리비아 우유니 사막";
+  if (/볼리비아|Bolivia/i.test(text)) return english ? "Bolivia" : "볼리비아";
+  if (/마쓰야마|마쯔야마|Matsuyama/i.test(text)) return english ? "Matsuyama, Shikoku, Japan" : "일본 시코쿠 마쓰야마";
+  if (/시코쿠|Shikoku/i.test(text)) return english ? "Shikoku, Japan" : "일본 시코쿠";
+  if (/부산|Busan/i.test(text)) return english ? "Busan, South Korea" : "부산";
+  if (/일본|Japan/i.test(text)) return english ? "Japan" : "일본";
   return "";
 }
 
@@ -912,6 +964,18 @@ function normalizeForCompare(text) {
     .toLowerCase()
     .replace(/[^\p{Letter}\p{Number}가-힣]/gu, "")
     .trim();
+}
+
+function localizeKnownTerm(term, language) {
+  if (language !== "English") return term;
+
+  const normalized = String(term || "").trim();
+  const glossary = {
+    "쥐": "a rat",
+    "존": "John"
+  };
+
+  return glossary[normalized] || `"${normalized}"`;
 }
 
 function formatMetadata(metadata, maxChars) {
@@ -951,7 +1015,29 @@ function rememberMessage(role, text) {
 }
 
 function detectLanguage(text) {
+  return detectAnswerLanguage(text);
+}
+
+function detectAnswerLanguage(text) {
+  const value = String(text || "");
+  if (/(answer|respond|reply|speak|say|explain|write|talk).{0,30}(in\s+)?english|\bin english\b|english only|영어로|영문으로/i.test(value)) {
+    return "English";
+  }
+  if (/(answer|respond|reply|speak|say|explain|write|talk).{0,30}(in\s+)?korean|\bin korean\b|korean only|한국어로|한글로|한국말로/i.test(value)) {
+    return "Korean";
+  }
+  return detectTextLanguage(value);
+}
+
+function detectTextLanguage(text) {
   return /[가-힣]/.test(text) ? "Korean" : "English";
+}
+
+function looksMostlyKorean(text) {
+  const sample = String(text || "").slice(0, 500);
+  const koreanCount = (sample.match(/[가-힣]/g) || []).length;
+  const latinCount = (sample.match(/[A-Za-z]/g) || []).length;
+  return koreanCount > 20 && koreanCount > latinCount * 0.45;
 }
 
 function extractResponseText(data) {

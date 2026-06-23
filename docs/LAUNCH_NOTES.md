@@ -12,7 +12,7 @@ It reads the current timestamp, visible captions/transcripts, and page context, 
 
 The first MVP supports YouTube best, with best-effort context capture for Netflix, Udemy, Coursera, Bilibili, and other active video tabs. It supports Chrome built-in AI, OpenRouter, Gemini, Groq, OpenAI, and local Ollama from one settings panel.
 
-It has voice questions, optional spoken answers, dark mode, prompt budgeting for long videos, and a local validation suite for transcript grounding regressions.
+It has voice questions, optional spoken answers, dark mode, explicit answer-language control, prompt budgeting for long videos, and a local validation suite for transcript grounding regressions.
 
 MIT licensed. Use Chrome built-in AI when available, bring your own API key, or use local Ollama. No build step.
 

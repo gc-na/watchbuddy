@@ -12,5 +12,6 @@
 - Voice questions with friendlier microphone permission errors.
 - Optional spoken answers with browser text-to-speech.
 - Light, dark, and system theme modes.
+- Explicit answer-language control for prompts and direct transcript answers.
 - Local validation script and GitHub Actions workflow.
 - Optional Chrome for Testing/Chromium smoke test.
