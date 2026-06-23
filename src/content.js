@@ -18,8 +18,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 async function getWatchContext() {
   const video = findActiveVideo();
+  if (!video) {
+    throw new Error("No active video found on this page.");
+  }
+
   const platform = detectPlatform();
-  const currentTime = video?.currentTime ?? 0;
+  const currentTime = video.currentTime ?? 0;
   const transcript = await collectTranscript(platform, currentTime);
   const transcriptRows = parseTimedTranscriptText(transcript);
   const nearbyRows = selectNearbyRows(transcriptRows, currentTime, 90);
@@ -31,9 +35,9 @@ async function getWatchContext() {
     url: location.href,
     title: document.title,
     metadata: collectPageMetadata(platform),
-    currentTime: video ? video.currentTime : null,
-    duration: video ? video.duration : null,
-    paused: video ? video.paused : null,
+    currentTime: video.currentTime,
+    duration: Number.isFinite(video.duration) ? video.duration : null,
+    paused: video.paused,
     transcript,
     transcriptRows: nearbyRows,
     currentTranscript: currentRow ? `[${currentRow.time}] ${currentRow.text}` : "",
@@ -76,7 +80,7 @@ function findActiveVideo() {
   if (!videos.length) return null;
 
   return videos
-    .filter((video) => Number.isFinite(video.duration))
+    .filter((video) => Number.isFinite(video.currentTime))
     .sort((a, b) => {
       const aScore = (a.paused ? 0 : 10) + a.clientWidth * a.clientHeight;
       const bScore = (b.paused ? 0 : 10) + b.clientWidth * b.clientHeight;

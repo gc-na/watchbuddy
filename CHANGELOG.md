@@ -13,5 +13,8 @@
 - Optional spoken answers with browser text-to-speech.
 - Light, dark, and system theme modes.
 - Explicit answer-language control for prompts and direct transcript answers.
+- API keys stored locally instead of synced storage.
+- Active-video requirement before capturing page context.
+- Prompt-injection hardening for transcript and page text.
 - Local validation script and GitHub Actions workflow.
 - Optional Chrome for Testing/Chromium smoke test.

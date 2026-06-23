@@ -33,7 +33,10 @@ const context = {
     createElement: () => noopEl()
   },
   chrome: {
-    storage: { sync: { get: async () => ({}), set: async () => {} } },
+    storage: {
+      local: { get: async () => ({}), set: async () => {}, remove: async () => {} },
+      sync: { get: async () => ({}), set: async () => {}, remove: async () => {} }
+    },
     tabs: { query: async () => [], sendMessage: async () => ({ ok: false }) }
   }
 };
@@ -71,6 +74,7 @@ const sample = {
 const checks = {
   promptUsesKoreanRules: context.buildPrompt("여기가 어디냐", sample, "chrome-ai").includes("질문을 반복하지 말고"),
   promptIncludesMetadata: context.buildPrompt("여기가 어디냐", sample, "chrome-ai").includes("마쓰야마"),
+  systemTreatsPageTextAsUntrusted: context.systemPrompt().includes("untrusted evidence"),
   englishDirectiveOverridesKoreanQuestion: context.detectAnswerLanguage("영어로 답해줘. 여기가 어디냐") === "English",
   englishPromptLanguageOverride: context.buildPrompt("Please answer in English. 여기가 어디냐", sample, "chrome-ai").includes("Answer language: English"),
   englishPromptTranslatesKoreanSource: context.buildPrompt("영어로 답해줘. 여기가 어디냐", sample, "chrome-ai").includes("Write the answer in English"),

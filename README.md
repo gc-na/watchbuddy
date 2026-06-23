@@ -176,7 +176,9 @@ Language is handled separately from transcript language. If you ask "answer in E
 
 WatchBuddy runs in your browser. It sends captured video context and your question to the selected provider only when you ask.
 
-API keys are stored with `chrome.storage.sync`. Do not use a shared API key in a published extension.
+API keys are stored with `chrome.storage.local`, not sync storage. WatchBuddy also refuses to capture arbitrary page text when no active video is present.
+
+Do not use a shared API key in a published extension.
 
 ## Roadmap
 
