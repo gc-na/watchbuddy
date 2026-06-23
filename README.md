@@ -1,97 +1,130 @@
 # WatchBuddy
 
-WatchBuddy is a Chrome extension that lets you talk with an AI buddy while watching videos.
+AI co-watching for YouTube, courses, keynotes, and long videos.
 
-It reads the current video page, nearby captions/transcripts when available, and your current playback timestamp. Then it answers questions like a study buddy, event curator, or co-watching friend.
+WatchBuddy is a Chrome extension that reads the current video timestamp, transcript, captions, page metadata, and recent chat so you can ask questions while watching.
 
-## Why
+It is built for moments like:
 
-Videos already know a lot about what you are watching: timestamps, captions, transcripts, titles, and page context. WatchBuddy turns that context into a conversation.
+- "What did they mean by that?"
+- "Where is this?"
+- "How much did they say it costs?"
+- "Quiz me on the last few minutes."
+- "Explain this lecture part like I am new to it."
 
-Use it for:
-
-- YouTube explainers and conference talks
-- Online courses on Udemy and Coursera
-- Long product keynotes
-- Netflix-style co-watching experiments
-- "Wait, what did they mean by that?" moments
-
-## MVP features
+## Highlights
 
 - Chrome Manifest V3 extension
 - Side panel chat UI
-- `Alt+W` shortcut to open WatchBuddy
-- Voice question input with the browser Speech Recognition API
-- Current video timestamp and page context capture
-- YouTube transcript/caption extraction, best effort
-- Netflix, Udemy, and Coursera page/video context extraction, best effort
-- Multi-provider AI settings
-- BYOK API key storage in `chrome.storage.sync`
+- `Alt+W` shortcut
+- Voice question input
+- YouTube transcript capture with current timestamp awareness
+- Direct answers for short factual transcript questions
+- Prompt budgeting for long videos
+- Chrome built-in AI support for a zero-key path
+- OpenRouter, Gemini, Groq, OpenAI, and Ollama provider support
+- Local validation suite for transcript grounding regressions
 - No build step
 
-## AI providers
+## Why This Exists
 
-WatchBuddy supports several providers from the settings panel:
+Long videos already contain useful structure: timestamps, captions, transcripts, descriptions, titles, and page context. WatchBuddy turns that into a conversation without forcing you to leave the video.
 
-- Chrome built-in AI with Gemini Nano, when available in the user's Chrome
-- OpenRouter with `openrouter/free` as the default free-model router
-- Google Gemini with `gemini-2.5-flash`
-- Groq with `llama-3.3-70b-versatile`
-- OpenAI with `gpt-5.4-mini`
-- Ollama local with `llama3.2`
+The goal is not just "chat with a page." The goal is a small companion that understands where you are in the video.
 
-Chrome built-in AI is the best zero-key path when it is available. It runs through Chrome's Prompt API and may download Gemini Nano the first time a user asks a question. Availability depends on Chrome version, device support, profile settings, and rollout status.
+## Supported Providers
 
-Hosted providers still need each user's own API key. That keeps the extension safe to publish without leaking a shared key. If you want a true "free for users, limited by IP" mode, run a small backend proxy that owns the provider key, rate-limits by IP, and forwards approved requests to the model provider.
+| Provider | Default model | API key |
+| --- | --- | --- |
+| Chrome built-in AI | Gemini Nano | No |
+| OpenRouter | `openrouter/free` | Yes |
+| Google Gemini | `gemini-2.5-flash` | Yes |
+| Groq | `llama-3.3-70b-versatile` | Yes |
+| OpenAI | `gpt-5.4-mini` | Yes |
+| Ollama | `llama3.2` | No |
 
-For Ollama, run a local model first:
+Chrome built-in AI is the best zero-key path when available. Hosted providers use bring-your-own-key so the extension never ships a shared API key.
+
+## Install Locally
+
+1. Clone or download this repository.
+2. Open `chrome://extensions`.
+3. Enable Developer mode.
+4. Click Load unpacked.
+5. Select the `watchbuddy` folder.
+6. Open a supported video page.
+7. Click WatchBuddy or press `Alt+W`.
+8. Pick a provider in settings.
+
+For Ollama:
 
 ```bash
 ollama pull llama3.2
 ollama serve
 ```
 
-Depending on your Ollama setup, you may also need to allow Chrome extension origins.
-
-## Install locally
-
-1. Download or clone this repository.
-2. Open `chrome://extensions`.
-3. Enable Developer mode.
-4. Click Load unpacked.
-5. Select the `watchbuddy` folder.
-6. Open a supported video page.
-7. Click the WatchBuddy extension icon or press `Alt+W`.
-8. Pick an AI provider and add its API key in settings.
-
-## Validate
-
-Run the local validation script before publishing:
+## Validation
 
 ```bash
-node scripts/validate.js
+npm run validate
 ```
 
-It checks extension JavaScript syntax, the manifest, prompt grounding, Korean follow-up questions, and fallback behavior for weak local-model answers.
+The validation script checks:
 
-## Tips
+- extension JavaScript syntax
+- `manifest.json`
+- Korean follow-up grounding
+- direct transcript answers
+- weak-answer fallback behavior
+- long-video prompt budgeting
 
-For best results on YouTube, open the transcript panel or enable captions before asking. Some platforms restrict subtitle access, so WatchBuddy falls back to visible captions and page text.
+## Package
 
-## Roadmap
+```bash
+npm run package
+```
 
-- Robust YouTube timed transcript parser
-- Local per-video memory
-- Streaming answers
-- Whisper or Realtime API voice mode
-- Bring-your-own-model provider support
-- Conversation styles: study tutor, hype friend, skeptic, curator
-- Shareable clips with AI explanations
-- Better Netflix/Udemy/Coursera adapters
+This creates `watchbuddy-mvp.zip` next to the repository folder.
+
+## Publish To GitHub
+
+If you have the GitHub CLI installed:
+
+```bash
+scripts/publish-github.sh watchbuddy public
+```
+
+That script validates, packages, creates a public GitHub repository if needed, pushes `main`, and opens the repository page.
+
+## Accuracy Philosophy
+
+WatchBuddy uses two layers:
+
+1. Direct transcript extraction for factual questions such as prices, places, and "what did they say?"
+2. AI provider calls for explanation, tutoring, summarization, and conversational help.
+
+This keeps short factual answers grounded instead of asking a model to guess from a huge transcript blob.
 
 ## Privacy
 
-WatchBuddy runs locally in your browser. It sends the captured page/video context and your question to your selected AI provider only when you ask a question. Your API key is stored in Chrome sync storage.
+WatchBuddy runs in your browser. It sends captured video context and your question to the selected provider only when you ask.
+
+API keys are stored with `chrome.storage.sync`. Do not use a shared API key in a published extension.
+
+## Roadmap
+
+- More robust YouTube transcript adapters
+- Better Netflix, Udemy, and Coursera adapters
+- Streaming responses
+- Local per-video memory
+- OCR for visible video text
+- Audio/music identification integration
+- Provider-specific model presets
+- Test fixture corpus for transcript accuracy
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

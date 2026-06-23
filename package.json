@@ -1,0 +1,22 @@
+{
+  "name": "watchbuddy",
+  "version": "0.1.0",
+  "description": "AI co-watching sidekick for YouTube, courses, keynotes, and streaming videos.",
+  "private": false,
+  "license": "MIT",
+  "scripts": {
+    "validate": "node scripts/validate.js",
+    "package": "bash scripts/package.sh"
+  },
+  "keywords": [
+    "chrome-extension",
+    "youtube",
+    "transcript",
+    "ai",
+    "gemini-nano",
+    "openrouter",
+    "ollama",
+    "watch-party",
+    "study-buddy"
+  ]
+}
